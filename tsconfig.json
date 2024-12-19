@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "commonjs",
+    "outDir": "./dist",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": "../..",
+    "paths": {
+      "@pixlabs/shared": ["packages/shared/index"],
+      "@pixlabs/shared/*": ["packages/shared/*"]
+    }
+  },
+  "include": ["src/**/*", "../../packages/shared/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
