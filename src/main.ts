@@ -8,11 +8,24 @@ import { checkUsernameSchema, updateAccountSchema } from "./types/types";
 import dotenv from "dotenv";
 import { initWasm } from "./lib/wasm-loader";
 import OpenAI from "openai";
+import rateLimit from "express-rate-limit";
 
 dotenv.config();
 
 const app = express();
-const upload = multer();
+const upload = multer({
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    const validMimeTypes = ["image/jpeg", "image/png", "image/webp"];
+    if (!validMimeTypes.includes(file.mimetype)) {
+      cb(new Error("Invalid file type"));
+      return;
+    }
+    cb(null, true);
+  },
+});
 
 // Environment variables
 const {
@@ -87,7 +100,22 @@ app.get("/api/health", (_, res) => {
 const PIXEL_ART_INJECTION =
   "You are a pixel art sprite creator. You make an image with a white background. Pixels are sharp and square. Make ";
 
-app.post("/api/generate-image", async (req, res) => {
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: { error: "Too many requests, please try again later." },
+});
+
+// Apply to all routes
+app.use(apiLimiter);
+
+// Stricter limit for image generation
+const aiLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 10, // Limit each IP to 10 requests per hour
+});
+
+app.post("/api/generate-image", aiLimiter, async (req, res) => {
   try {
     const { prompt } = req.body;
 

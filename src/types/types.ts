@@ -4,6 +4,14 @@ export const usernameRegex = /^[a-zA-Z0-9_]+$/;
 
 export const fullNameRegex = /^[a-zA-Z0-9 ]+$/;
 
+const sanitizeUrl = (url: string) => {
+  const sanitized = url.toLowerCase().trim();
+  if (!sanitized.startsWith("http://") && !sanitized.startsWith("https://")) {
+    return `https://${sanitized}`;
+  }
+  return sanitized;
+};
+
 export const checkUsernameSchema = z.object({
   username: z
     .string()
@@ -34,7 +42,7 @@ export const updateAccountSchema = z.object({
     .min(3)
     .max(20)
     .optional(),
-  website: z.string().url().optional(),
+  website: z.string().url().transform(sanitizeUrl).optional(),
 });
 
 export type UpdateAccountBody = z.infer<typeof updateAccountSchema> & {
