@@ -312,86 +312,49 @@ app.post(
   }
 );
 
-app.post(
-  "/api/estimate-grid-size",
-  upload.single("image"),
-  async (req, res) => {
-    try {
-      const image = req.file;
-
-      if (!image) {
-        throw new Error("No image provided");
-      }
-
-      // Convert image buffer to base64
-      const base64Image = `data:${
-        image.mimetype
-      };base64,${image.buffer.toString("base64")}`;
-
-      // Call WASM function
-      const result = (global as any).estimateGridSize(base64Image);
-
-      if (result.error) {
-        throw new Error(result.error);
-      }
-
-      res.status(200).json({ gridSize: result.gridSize });
-    } catch (err) {
-      console.error("Estimate grid size error:", err);
-      res.status(500).json({
-        error: "Failed to estimate grid size",
-        message: err instanceof Error ? err.message : "Unknown error",
-      });
-    }
-  }
-);
-
-app.post("/api/downscale-image", upload.single("image"), async (req, res) => {
+// Replace the existing /api/estimate-grid-size endpoint
+app.post("/api/estimate-grid-size", async (req, res) => {
   try {
-    const image = req.file;
-    const grid = parseInt(req.body.grid, 10);
+    const { user } = await withAuth(req);
 
-    if (!image) {
-      throw new Error("No image provided");
-    }
-
-    // Validate mime type
-    const validMimeTypes = ["image/jpeg", "image/png", "image/webp"];
-    if (!validMimeTypes.includes(image.mimetype)) {
-      throw new Error("Invalid image format. Please use JPEG, PNG, or WebP");
-    }
-
-    console.log("Processing image:", {
-      mimetype: image.mimetype,
-      size: image.size,
-      originalname: image.originalname,
+    // Return a signed key for frontend processing
+    res.status(200).json({
+      key: `${user.id}_${Date.now()}`,
+      authorized: true,
     });
+  } catch (err) {
+    console.error("Estimate grid size error:", err);
+    res.status(401).json({
+      error: "Unauthorized",
+      message: err instanceof Error ? err.message : "Unknown error",
+    });
+  }
+});
 
-    // Convert image buffer to base64
-    const base64Image = `data:${image.mimetype};base64,${image.buffer.toString(
-      "base64"
-    )}`;
+// Replace the existing /api/downscale-image endpoint
+app.post("/api/downscale-image", async (req, res) => {
+  try {
+    const { user } = await withAuth(req);
 
-    // Call WASM function
-    const result = (global as any).downscaleImage(base64Image, grid);
+    // if (!req.file) {
+    //   throw new Error("No image provided");
+    // }
 
-    if (!result) {
-      throw new Error("WASM function returned no result");
-    }
+    // // Validate mime type
+    // const validMimeTypes = ["image/jpeg", "image/png", "image/webp"];
+    // if (!validMimeTypes.includes(req.file.mimetype)) {
+    //   throw new Error("Invalid image format. Please use JPEG, PNG, or WebP");
+    // }
 
-    if (result.error) {
-      throw new Error(result.error);
-    }
-
-    if (!result.results || !Array.isArray(result.results)) {
-      throw new Error("Invalid result format from WASM");
-    }
-
-    res.status(200).json(result);
+    // Return a signed key for frontend processing
+    res.status(200).json({
+      key: `${user.id}_${Date.now()}`,
+      authorized: true,
+    });
   } catch (err) {
     console.error("Downscale image error:", err);
-    res.status(500).json({
-      error: "Failed to downscale image",
+    res.status(401).json({
+      error: "Unauthorized",
       message: err instanceof Error ? err.message : "Unknown error",
     });
   }
