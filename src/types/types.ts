@@ -51,10 +51,6 @@ export type UpdateAccountBody = z.infer<typeof updateAccountSchema> & {
 
 export type CheckUsernameBody = z.infer<typeof checkUsernameSchema>;
 
-export type EstimateGridSizeBody = {
-  image: File;
-};
-
 export type EstimateGridSizeResponse = {
   gridSize: number;
 };
@@ -64,8 +60,4 @@ export type DownscaleResponse = {
     grid: number;
     image: string;
   }[];
-};
-
-export type DownscaleImageBody = {
-  image: File;
 };
