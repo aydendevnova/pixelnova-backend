@@ -6,9 +6,10 @@ import { BLACKLISTED_USERNAMES } from "./const/blacklisted-usernames";
 import { BLACKLISTED_SITES } from "./const/blacklisted-sites";
 import { checkUsernameSchema, updateAccountSchema } from "./types/types";
 import dotenv from "dotenv";
-import { initWasm } from "./lib/wasm-loader";
+
 import OpenAI from "openai";
 import rateLimit from "express-rate-limit";
+import crypto from "crypto";
 
 dotenv.config();
 
@@ -53,8 +54,12 @@ app.use(
 
 app.use(express.json());
 
-// Initialize WASM when server starts
-initWasm().catch(console.error);
+function generateImageKey(userId: string, timestamp: number): string {
+  // Generate hash using SHA-256 (same as Go implementation)
+  const hash = crypto.createHash("sha256");
+  hash.update(`${userId}:${timestamp}`);
+  return hash.digest("hex");
+}
 
 // Helper function to handle protected routes
 const withAuth = async (req: express.Request) => {
@@ -316,10 +321,13 @@ app.post(
 app.post("/api/estimate-grid-size", async (req, res) => {
   try {
     const { user } = await withAuth(req);
+    const timestamp = Math.floor(Date.now() / 1000);
 
-    // Return a signed key for frontend processing
+    const key = generateImageKey(user.id, timestamp);
+
     res.status(200).json({
-      key: `${user.id}_${Date.now()}`,
+      key,
+      timestamp,
       authorized: true,
     });
   } catch (err) {
@@ -336,23 +344,39 @@ app.post("/api/downscale-image", async (req, res) => {
   try {
     const { user } = await withAuth(req);
 
-    // if (!req.file) {
-    //   throw new Error("No image provided");
-    // }
+    const timestamp = Math.floor(Date.now() / 1000);
 
-    // // Validate mime type
-    // const validMimeTypes = ["image/jpeg", "image/png", "image/webp"];
-    // if (!validMimeTypes.includes(req.file.mimetype)) {
-    //   throw new Error("Invalid image format. Please use JPEG, PNG, or WebP");
-    // }
+    const key = generateImageKey(user.id, timestamp);
 
-    // Return a signed key for frontend processing
-    res.status(200).json({
-      key: `${user.id}_${Date.now()}`,
+    res.json({
+      key,
+      timestamp,
       authorized: true,
     });
   } catch (err) {
-    console.error("Downscale image error:", err);
+    console.error("Key generation error:", err);
+    res.status(401).json({
+      error: "Unauthorized",
+      message: err instanceof Error ? err.message : "Unknown error",
+    });
+  }
+});
+
+app.post("/api/downscale-key", async (req, res) => {
+  try {
+    const { user } = await withAuth(req);
+
+    const timestamp = Math.floor(Date.now() / 1000);
+
+    const key = generateImageKey(user.id, timestamp);
+
+    res.json({
+      key,
+      timestamp,
+      authorized: true,
+    });
+  } catch (err) {
+    console.error("Key generation error:", err);
     res.status(401).json({
       error: "Unauthorized",
       message: err instanceof Error ? err.message : "Unknown error",
