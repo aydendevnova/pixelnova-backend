@@ -10,6 +10,7 @@ import dotenv from "dotenv";
 import OpenAI from "openai";
 import rateLimit from "express-rate-limit";
 import crypto from "crypto";
+import { nonceCache } from "./utils/nonce-cache";
 
 dotenv.config();
 
@@ -54,11 +55,25 @@ app.use(
 
 app.use(express.json());
 
-function generateImageKey(userId: string, timestamp: number): string {
-  // Generate hash using SHA-256 (same as Go implementation)
+function hashTimeAndNonce(timestamp: number, nonce: string): string {
   const hash = crypto.createHash("sha256");
-  hash.update(`${userId}:${timestamp}`);
+  hash.update(`${timestamp}:${nonce}`);
   return hash.digest("hex");
+}
+
+function generateImageKey(
+  userId: string,
+  timestamp: number,
+  serverNonce: string
+): string {
+  // First hash timestamp and nonce together
+  const timeNonceHash = hashTimeAndNonce(timestamp, serverNonce);
+
+  // Use HMAC-SHA256 with the hashed time+nonce as the key
+  const hmac = crypto.createHmac("sha256", timeNonceHash);
+  const data = `${userId}:${timestamp}:${serverNonce}`;
+  hmac.update(data);
+  return hmac.digest("hex");
 }
 
 // Helper function to handle protected routes
@@ -317,17 +332,32 @@ app.post(
   }
 );
 
+// Generate a secure nonce for each request
+function generateServerNonce(): string {
+  return crypto.randomBytes(32).toString("hex");
+}
+
 // Replace the existing /api/estimate-grid-size endpoint
 app.post("/api/estimate-grid-size", async (req, res) => {
   try {
     const { user } = await withAuth(req);
     const timestamp = Math.floor(Date.now() / 1000);
+    const serverNonce = generateServerNonce();
 
-    const key = generateImageKey(user.id, timestamp);
+    await nonceCache.cacheNonce(user.id, serverNonce, 30); // 30 second TTL
+
+    const key = generateImageKey(user.id, timestamp, serverNonce);
+
+    console.log("[Backend] Sending response:", {
+      a: key,
+      b: timestamp,
+      c: serverNonce,
+    });
 
     res.status(200).json({
-      key,
-      timestamp,
+      a: key,
+      b: timestamp,
+      c: serverNonce,
       authorized: true,
     });
   } catch (err) {
@@ -339,41 +369,27 @@ app.post("/api/estimate-grid-size", async (req, res) => {
   }
 });
 
-// Replace the existing /api/downscale-image endpoint
 app.post("/api/downscale-image", async (req, res) => {
   try {
     const { user } = await withAuth(req);
-
     const timestamp = Math.floor(Date.now() / 1000);
+    const serverNonce = generateServerNonce();
 
-    const key = generateImageKey(user.id, timestamp);
+    // Store nonce in Redis or similar with short TTL
+    await nonceCache.cacheNonce(user.id, serverNonce, 30); // 30 second TTL
+
+    const key = generateImageKey(user.id, timestamp, serverNonce);
+
+    console.log("[Backend] Sending response:", {
+      a: key,
+      b: timestamp,
+      c: serverNonce,
+    });
 
     res.json({
-      key,
-      timestamp,
-      authorized: true,
-    });
-  } catch (err) {
-    console.error("Key generation error:", err);
-    res.status(401).json({
-      error: "Unauthorized",
-      message: err instanceof Error ? err.message : "Unknown error",
-    });
-  }
-});
-
-app.post("/api/downscale-key", async (req, res) => {
-  try {
-    const { user } = await withAuth(req);
-
-    const timestamp = Math.floor(Date.now() / 1000);
-
-    const key = generateImageKey(user.id, timestamp);
-
-    res.json({
-      key,
-      timestamp,
-      authorized: true,
+      a: key,
+      b: timestamp,
+      c: serverNonce,
     });
   } catch (err) {
     console.error("Key generation error:", err);
