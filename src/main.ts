@@ -55,25 +55,32 @@ app.use(
 
 app.use(express.json());
 
-function hashTimeAndNonce(timestamp: number, nonce: string): string {
-  const hash = crypto.createHash("sha256");
-  hash.update(`${timestamp}:${nonce}`);
-  return hash.digest("hex");
-}
+const MAGIC_PRIME = 0x1f7b3c5d;
 
 function generateImageKey(
   userId: string,
   timestamp: number,
   serverNonce: string
 ): string {
-  // First hash timestamp and nonce together
-  const timeNonceHash = hashTimeAndNonce(timestamp, serverNonce);
-
-  // Use HMAC-SHA256 with the hashed time+nonce as the key
-  const hmac = crypto.createHmac("sha256", timeNonceHash);
+  // Simple concatenation
   const data = `${userId}:${timestamp}:${serverNonce}`;
-  hmac.update(data);
-  return hmac.digest("hex");
+
+  // First hash
+  const h1 = crypto.createHash("sha256");
+  h1.update(data);
+  const hash1 = Buffer.from(h1.digest());
+
+  // XOR each byte with our magic number
+  for (let i = 0; i < hash1.length; i++) {
+    hash1[i] ^= (MAGIC_PRIME >> i % 8) & 0xff;
+  }
+
+  // Second hash
+  const h2 = crypto.createHash("sha256");
+  h2.update(hash1);
+  const result = h2.digest("hex");
+
+  return result;
 }
 
 // Helper function to handle protected routes
@@ -348,12 +355,6 @@ app.post("/api/estimate-grid-size", async (req, res) => {
 
     const key = generateImageKey(user.id, timestamp, serverNonce);
 
-    console.log("[Backend] Sending response:", {
-      a: key,
-      b: timestamp,
-      c: serverNonce,
-    });
-
     res.status(200).json({
       a: key,
       b: timestamp,
@@ -379,13 +380,6 @@ app.post("/api/downscale-image", async (req, res) => {
     await nonceCache.cacheNonce(user.id, serverNonce, 30); // 30 second TTL
 
     const key = generateImageKey(user.id, timestamp, serverNonce);
-
-    console.log("[Backend] Sending response:", {
-      a: key,
-      b: timestamp,
-      c: serverNonce,
-    });
-
     res.json({
       a: key,
       b: timestamp,
