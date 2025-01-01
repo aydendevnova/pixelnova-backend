@@ -46,7 +46,7 @@ app.use(
   cors({
     origin: [
       "http://localhost:3000",
-      "https://app.pixlabs.org", // Cloudflare Pages domain
+      "https://editor.pixelnova.app", // Cloudflare Pages domain
     ],
     methods: ["GET", "POST", "PUT", "OPTIONS", "PATCH", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],

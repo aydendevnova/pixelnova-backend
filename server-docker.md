@@ -3,13 +3,13 @@
 1. Build docker image
 
 ```bash
-docker build -t pixlabs-backend .
+docker build -t pixelnova-backend .
 ```
 
 2. Run the container with environment variables:
 
 ```bash
-docker run -p 8787:8787 --env-file .env pixlabs-backend
+docker run -p 8787:8787 --env-file .env pixelnova-backend
 ```
 
 Test endpoints:

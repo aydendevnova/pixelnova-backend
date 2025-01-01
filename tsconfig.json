@@ -6,13 +6,8 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "baseUrl": "../..",
-    "paths": {
-      "@pixlabs/shared": ["packages/shared/index"],
-      "@pixlabs/shared/*": ["packages/shared/*"]
-    }
+    "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*", "../../packages/shared/**/*"],
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
 }

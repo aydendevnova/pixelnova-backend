@@ -1,11 +1,12 @@
 {
-  "name": "pixlabs-backend",
+  "name": "pixelnova-backend",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "ts-node-dev --respawn --transpile-only src/main.ts",
-    "dev:build-wasm": "./wasm/build-wasm.sh && ts-node-dev --respawn --transpile-only src/main.ts",
+    "kill-port": "node scripts/kill-port.js",
+    "dev": "ts-node-dev --respawn --transpile-only --exit-child src/main.ts",
+    "dev:build-wasm": "./wasm/build-wasm.sh && ts-node-dev --respawn --transpile-only --exit-child src/main.ts",
     "build": "tsc",
     "build:wasm": "./wasm/build-wasm.sh",
     "start": "node dist/main.js",
