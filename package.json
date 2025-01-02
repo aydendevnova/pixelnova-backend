@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "kill-port": "node scripts/kill-port.js",
-    "dev": "ts-node-dev --respawn --transpile-only --exit-child src/main.ts",
+    "dev": "node scripts/kill-port.js && ts-node-dev --respawn --transpile-only --exit-child src/main.ts",
     "dev:build-wasm": "./wasm/build-wasm.sh && ts-node-dev --respawn --transpile-only --exit-child src/main.ts",
     "build": "tsc",
     "build:wasm": "./wasm/build-wasm.sh",

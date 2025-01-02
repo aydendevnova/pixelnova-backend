@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import multer from "multer";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient, User } from "@supabase/supabase-js";
 import { BLACKLISTED_USERNAMES } from "./const/blacklisted-usernames";
 import { BLACKLISTED_SITES } from "./const/blacklisted-sites";
 import { checkUsernameSchema, updateAccountSchema } from "./types/types";
@@ -11,8 +11,10 @@ import OpenAI from "openai";
 import rateLimit from "express-rate-limit";
 import crypto from "crypto";
 import { nonceCache } from "./utils/nonce-cache";
+import { Database } from "./lib/types_db";
 
 dotenv.config();
+// Must come after dotenv.config()
 
 const app = express();
 const upload = multer({
@@ -363,8 +365,8 @@ app.post("/api/estimate-grid-size", async (req, res) => {
     });
   } catch (err) {
     console.error("Estimate grid size error:", err);
-    res.status(401).json({
-      error: "Unauthorized",
+    res.status(500).json({
+      error: "Failed to estimate grid size",
       message: err instanceof Error ? err.message : "Unknown error",
     });
   }
@@ -372,7 +374,8 @@ app.post("/api/estimate-grid-size", async (req, res) => {
 
 app.post("/api/downscale-image", async (req, res) => {
   try {
-    const { user } = await withAuth(req);
+    await withCredits(req, 5);
+    const { user, supabase } = await withAuth(req);
     const timestamp = Math.floor(Date.now() / 1000);
     const serverNonce = generateServerNonce();
 
@@ -385,12 +388,200 @@ app.post("/api/downscale-image", async (req, res) => {
       b: timestamp,
       c: serverNonce,
     });
+
+    // get profile
+    const { data: profile, error: fetchError } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", user.id)
+      .single();
+
+    if (fetchError) throw fetchError;
+
+    await spendCredits(profile, supabase, 5);
   } catch (err) {
-    console.error("Key generation error:", err);
-    res.status(401).json({
-      error: "Unauthorized",
+    console.error("Downscale image error:", err);
+    res.status(500).json({
+      error: "Failed to downscale image",
       message: err instanceof Error ? err.message : "Unknown error",
     });
+  }
+});
+
+app.post("/api/credits/add", async (req, res) => {
+  try {
+    const { user, supabase } = await withAuth(req);
+    const { amount } = req.body;
+
+    if (typeof amount !== "number" || amount <= 0) {
+      return res.status(400).json({ error: "Invalid amount" });
+    }
+
+    // Get current credits
+    const { data: profile, error: fetchError } = await supabase
+      .from("profiles")
+      .select("credits")
+      .eq("id", user.id)
+      .single();
+
+    if (fetchError) {
+      throw fetchError;
+    }
+
+    const newAmount = (profile?.credits || 0) + amount;
+
+    // Update credits in profiles table
+    const { error: updateError } = await supabase
+      .from("profiles")
+      .update({
+        credits: newAmount,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", user.id);
+
+    if (updateError) throw updateError;
+
+    return res.status(200).json({ credits: newAmount });
+  } catch (err) {
+    console.error("Add credits error:", err);
+    res.status(500).json({
+      error: "Failed to add credits",
+      message: err instanceof Error ? err.message : "Unknown error",
+    });
+  }
+});
+
+app.post("/api/credits/deduct", async (req, res) => {
+  try {
+    const { user, supabase } = await withAuth(req);
+    const { amount } = req.body;
+
+    if (typeof amount !== "number" || amount <= 0) {
+      return res.status(400).json({ error: "Invalid amount" });
+    }
+
+    // Get current credits from profiles table
+    const { data: profile, error: fetchError } = await supabase
+      .from("profiles")
+      .select("credits")
+      .eq("id", user.id)
+      .single();
+
+    if (fetchError) throw fetchError;
+
+    if (!profile || profile.credits < amount) {
+      return res.status(400).json({ error: "Insufficient credits" });
+    }
+
+    const newAmount = profile.credits - amount;
+
+    // Update credits in profiles table
+    const { error: updateError } = await supabase
+      .from("profiles")
+      .update({
+        credits: newAmount,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", user.id);
+
+    if (updateError) throw updateError;
+
+    return res.status(200).json({ credits: newAmount });
+  } catch (err) {
+    console.error("Deduct credits error:", err);
+    res.status(500).json({
+      error: "Failed to deduct credits",
+      message: err instanceof Error ? err.message : "Unknown error",
+    });
+  }
+});
+
+// Add credits check middleware for protected operations
+const withCredits = async (req: express.Request, cost: number) => {
+  const { user, supabase } = await withAuth(req);
+
+  const { data: profile, error } = await supabase
+    .from("profiles")
+    .select("credits")
+    .eq("id", user.id)
+    .single();
+
+  if (error) throw error;
+  if (!profile || profile.credits < cost) {
+    throw new Error("Insufficient credits");
+  }
+
+  return { user, supabase, credits: profile.credits };
+};
+
+async function spendCredits(
+  profile: Database["public"]["Tables"]["profiles"]["Row"],
+  supabase: SupabaseClient,
+  amount: number
+) {
+  // Deduct credits
+  const { error: deductError } = await supabase
+    .from("profiles")
+    .update({
+      credits: profile.credits - amount,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", profile.id);
+
+  if (deductError) throw deductError;
+}
+
+app.post("/api/generate-image", async (req, res) => {
+  try {
+    const { user, supabase } = await withAuth(req);
+    await withCredits(req, 5); // Cost: 5 credits
+    const { prompt } = req.body;
+
+    if (!prompt) {
+      return res.status(400).json({ error: "Prompt is required" });
+    }
+
+    const response = await openai.images.generate({
+      model: "dall-e-3",
+      prompt: `${PIXEL_ART_INJECTION} ${prompt}`,
+      n: 1,
+      size: "1024x1024",
+    });
+
+    const imageUrl = response.data?.[0]?.url;
+    if (!imageUrl) {
+      return res.status(500).json({ error: "Failed to generate image URL" });
+    }
+
+    // Fetch the image from the URL
+    const imageResponse = await fetch(imageUrl);
+    if (!imageResponse.ok) {
+      throw new Error("Failed to fetch image from OpenAI");
+    }
+
+    const imageBuffer = await imageResponse.arrayBuffer();
+
+    // get profile
+    const { data: profile, error: fetchError } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", user.id)
+      .single();
+
+    if (fetchError) throw fetchError;
+
+    await spendCredits(profile, supabase, 5);
+
+    // Set appropriate headers and send the image buffer
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="generated-image.png"'
+    );
+    res.send(Buffer.from(imageBuffer));
+  } catch (error) {
+    console.error("Error generating image:", error);
+    return res.status(500).json({ error: "Failed to generate image" });
   }
 });
 
