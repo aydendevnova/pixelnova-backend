@@ -1,7 +1,8 @@
 import express from "express";
 import cors from "cors";
 import multer from "multer";
-import { createClient, SupabaseClient, User } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
+
 import { BLACKLISTED_USERNAMES } from "./const/blacklisted-usernames";
 import { BLACKLISTED_SITES } from "./const/blacklisted-sites";
 import { checkUsernameSchema, updateAccountSchema } from "./types/types";
@@ -11,10 +12,11 @@ import OpenAI from "openai";
 import rateLimit from "express-rate-limit";
 import crypto from "crypto";
 import { nonceCache } from "./utils/nonce-cache";
-import { Database } from "./lib/types_db";
+import { type Database } from "./lib/types_db";
 
 dotenv.config();
 // Must come after dotenv.config()
+import { stripe } from "./utils/stripe";
 
 const app = express();
 const upload = multer({
@@ -48,11 +50,84 @@ app.use(
   cors({
     origin: [
       "http://localhost:3000",
+      "http://192.168.12.102:3000",
       "https://editor.pixelnova.app", // Cloudflare Pages domain
     ],
     methods: ["GET", "POST", "PUT", "OPTIONS", "PATCH", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
+);
+
+// This webhook must be before the app.use(express.json())
+
+app.post(
+  "/api/webhook",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    // Process the webhook asynchronously
+    try {
+      if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+        throw new Error("Missing Supabase configuration");
+      }
+      if (!process.env.STRIPE_WEBHOOK_SECRET) {
+        throw new Error("Missing Stripe webhook secret");
+      }
+
+      const signature = req.headers["stripe-signature"];
+      if (!signature) {
+        throw new Error("Missing signature");
+      }
+
+      const event = stripe.webhooks.constructEvent(
+        req.body,
+        signature,
+        process.env.STRIPE_WEBHOOK_SECRET
+      );
+
+      const supabase = createClient<Database>(
+        process.env.SUPABASE_URL,
+        process.env.SUPABASE_SERVICE_ROLE_KEY,
+        {
+          auth: {
+            autoRefreshToken: false,
+            persistSession: false,
+          },
+        }
+      );
+
+      // Add idempotency check
+      const eventId = event.id;
+      const { data: existingEvent } = await supabase
+        .from("stripe_events")
+        .select("id")
+        .eq("stripe_event_id", eventId)
+        .single();
+
+      if (existingEvent) {
+        console.log(`Event ${eventId} already processed, skipping`);
+        return;
+      }
+
+      // Process the event
+      await processStripeEvent(event, supabase);
+
+      // Record successful processing
+      await supabase.from("stripe_events").insert({
+        stripe_event_id: eventId,
+        type: event.type,
+        processed_at: new Date().toISOString(),
+        error_message: null,
+      });
+
+      // Return a 200 response quickly to acknowledge receipt
+      res.status(200).json({ received: true });
+    } catch (err) {
+      console.error("Webhook processing error:", err);
+      // Consider implementing error reporting service here
+
+      res.status(500).json({ received: false });
+    }
+  }
 );
 
 app.use(express.json());
@@ -97,12 +172,16 @@ const withAuth = async (req: express.Request) => {
     throw new Error("Missing Supabase configuration");
   }
 
-  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  });
+  const supabase = createClient<Database>(
+    SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY,
+    {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    }
+  );
 
   const token = authHeader.split(" ")[1];
   const {
@@ -304,7 +383,7 @@ app.post(
           throw new Error("Missing Supabase configuration");
         }
 
-        const supabase = createClient(
+        const supabase = createClient<Database>(
           process.env.SUPABASE_URL,
           process.env.SUPABASE_SERVICE_ROLE_KEY,
           {
@@ -389,108 +468,11 @@ app.post("/api/downscale-image", async (req, res) => {
       c: serverNonce,
     });
 
-    // get profile
-    const { data: profile, error: fetchError } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", user.id)
-      .single();
-
-    if (fetchError) throw fetchError;
-
-    await spendCredits(profile, supabase, 5);
+    await spendCredits(user.id, supabase, 5);
   } catch (err) {
     console.error("Downscale image error:", err);
     res.status(500).json({
       error: "Failed to downscale image",
-      message: err instanceof Error ? err.message : "Unknown error",
-    });
-  }
-});
-
-app.post("/api/credits/add", async (req, res) => {
-  try {
-    const { user, supabase } = await withAuth(req);
-    const { amount } = req.body;
-
-    if (typeof amount !== "number" || amount <= 0) {
-      return res.status(400).json({ error: "Invalid amount" });
-    }
-
-    // Get current credits
-    const { data: profile, error: fetchError } = await supabase
-      .from("profiles")
-      .select("credits")
-      .eq("id", user.id)
-      .single();
-
-    if (fetchError) {
-      throw fetchError;
-    }
-
-    const newAmount = (profile?.credits || 0) + amount;
-
-    // Update credits in profiles table
-    const { error: updateError } = await supabase
-      .from("profiles")
-      .update({
-        credits: newAmount,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", user.id);
-
-    if (updateError) throw updateError;
-
-    return res.status(200).json({ credits: newAmount });
-  } catch (err) {
-    console.error("Add credits error:", err);
-    res.status(500).json({
-      error: "Failed to add credits",
-      message: err instanceof Error ? err.message : "Unknown error",
-    });
-  }
-});
-
-app.post("/api/credits/deduct", async (req, res) => {
-  try {
-    const { user, supabase } = await withAuth(req);
-    const { amount } = req.body;
-
-    if (typeof amount !== "number" || amount <= 0) {
-      return res.status(400).json({ error: "Invalid amount" });
-    }
-
-    // Get current credits from profiles table
-    const { data: profile, error: fetchError } = await supabase
-      .from("profiles")
-      .select("credits")
-      .eq("id", user.id)
-      .single();
-
-    if (fetchError) throw fetchError;
-
-    if (!profile || profile.credits < amount) {
-      return res.status(400).json({ error: "Insufficient credits" });
-    }
-
-    const newAmount = profile.credits - amount;
-
-    // Update credits in profiles table
-    const { error: updateError } = await supabase
-      .from("profiles")
-      .update({
-        credits: newAmount,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", user.id);
-
-    if (updateError) throw updateError;
-
-    return res.status(200).json({ credits: newAmount });
-  } catch (err) {
-    console.error("Deduct credits error:", err);
-    res.status(500).json({
-      error: "Failed to deduct credits",
       message: err instanceof Error ? err.message : "Unknown error",
     });
   }
@@ -515,26 +497,44 @@ const withCredits = async (req: express.Request, cost: number) => {
 };
 
 async function spendCredits(
-  profile: Database["public"]["Tables"]["profiles"]["Row"],
+  userId: string,
   supabase: SupabaseClient,
-  amount: number
+  amount: number,
+  existingCredits?: number | null | undefined
 ) {
+  let baseCredits = existingCredits ?? 0;
+  if (!baseCredits) {
+    // fetch profile
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("credits")
+      .eq("id", userId)
+      .single();
+    if (profileError) {
+      console.error("Error fetching user profile:", profileError);
+      throw new Error(`Failed to fetch user profile: ${profileError.message}`);
+    }
+    baseCredits = profile?.credits ?? 0;
+  }
   // Deduct credits
   const { error: deductError } = await supabase
     .from("profiles")
     .update({
-      credits: profile.credits - amount,
+      credits: baseCredits - amount,
       updated_at: new Date().toISOString(),
     })
-    .eq("id", profile.id);
+    .eq("id", userId);
 
-  if (deductError) throw deductError;
+  if (deductError) {
+    console.error("Error deducting credits:", deductError);
+    throw deductError;
+  }
 }
 
 app.post("/api/generate-image", async (req, res) => {
   try {
     const { user, supabase } = await withAuth(req);
-    await withCredits(req, 5); // Cost: 5 credits
+    await withCredits(req, 40); // Cost: 40 credits
     const { prompt } = req.body;
 
     if (!prompt) {
@@ -561,16 +561,7 @@ app.post("/api/generate-image", async (req, res) => {
 
     const imageBuffer = await imageResponse.arrayBuffer();
 
-    // get profile
-    const { data: profile, error: fetchError } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", user.id)
-      .single();
-
-    if (fetchError) throw fetchError;
-
-    await spendCredits(profile, supabase, 5);
+    await spendCredits(user.id, supabase, 40);
 
     // Set appropriate headers and send the image buffer
     res.setHeader("Content-Type", "image/png");
@@ -599,5 +590,142 @@ app.get("/api/protected", async (req, res) => {
       error: "Unauthorized",
       message: err instanceof Error ? err.message : "Unknown error",
     });
+  }
+});
+
+async function processStripeEvent(
+  event: any,
+  supabase: SupabaseClient<Database>
+) {
+  switch (event.type) {
+    case "checkout.session.completed": {
+      const session = event.data.object;
+      console.log("session");
+      console.log(session);
+
+      const userId = session.metadata?.user_id;
+
+      if (!userId) {
+        console.error("Missing user_id");
+        throw new Error("Missing user_id");
+      }
+
+      const priceId = session.metadata?.price_id;
+      if (!priceId) {
+        console.error("Missing price id");
+        throw new Error("Missing price id");
+      }
+
+      let amount = 0;
+      if (priceId === process.env.STRIPE_PRICE_ID_STARTER) {
+        amount = 2000;
+      } else if (priceId === process.env.STRIPE_PRICE_ID_PRO) {
+        amount = 5000;
+      } else {
+        console.error("Invalid price id");
+        throw new Error("Invalid price id");
+      }
+
+      // get their credits
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("credits")
+        .eq("id", userId)
+        .single();
+
+      if (profileError) {
+        console.error("Error fetching user profile:", profileError);
+        throw new Error(
+          `Failed to fetch user profile: ${profileError.message}`
+        );
+      }
+
+      if (!profile) {
+        console.error("User profile not found");
+        throw new Error("User profile not found");
+      }
+
+      const existingCredits = profile.credits ?? 0;
+
+      // Update their credits
+      const { error: updateError } = await supabase
+        .from("profiles")
+        .update({
+          credits: existingCredits + amount,
+        })
+        .eq("id", userId);
+
+      if (updateError) {
+        console.error("Error updating credits:", updateError);
+        throw updateError;
+      } else {
+        try {
+          await supabase.from("logs").insert({
+            type: "credit_added",
+            message: `User ${userId} purchased ${amount} credits.`,
+          });
+        } catch (error) {
+          console.error("Error logging credit purchase:", error);
+        }
+      }
+
+      // Use a transaction to ensure data consistency
+      const { error } = await supabase.from("stripe_customers").upsert({
+        stripe_customer_id: session.customer as string | null,
+        user_id: userId,
+        plan_active: true,
+        latest_address: session.customer_details?.address,
+        latest_currency: session.customer_details?.address?.country,
+      });
+
+      if (error) {
+        console.error("Error updating stripe_customers:", error);
+        throw error;
+      }
+      break;
+    }
+  }
+}
+
+app.post("/api/checkout", async (req, res) => {
+  try {
+    const { priceId } = req.body;
+    if (!priceId) {
+      return res.status(400).json({ error: "Invalid request" });
+    }
+
+    const { user } = await withAuth(req);
+    if (!user) {
+      return res.status(401).json({ error: "User not found" });
+    }
+
+    // verify price ID is valid
+    const price = await stripe.prices.retrieve(priceId);
+    if (!price) {
+      return res.status(400).json({ error: "Invalid price ID" });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      metadata: {
+        user_id: user.id,
+        price_id: priceId,
+      },
+      customer_email: user.email,
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price: priceId,
+          quantity: 1,
+        },
+      ],
+      mode: "payment",
+      success_url: `${req.headers.origin}/success`,
+      cancel_url: `${req.headers.origin}/cancel`,
+    });
+
+    return res.json({ id: session.id });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: e });
   }
 });

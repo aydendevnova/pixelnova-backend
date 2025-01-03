@@ -39,6 +39,27 @@ export type Database = {
         }
         Relationships: []
       }
+      logs: {
+        Row: {
+          created_at: string
+          id: number
+          message: string | null
+          type: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: number
+          message?: string | null
+          type?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: number
+          message?: string | null
+          type?: string | null
+        }
+        Relationships: []
+      }
       pictures: {
         Row: {
           created_at: string
@@ -145,6 +166,72 @@ export type Database = {
           updated_at?: string | null
           username?: string | null
           website?: string | null
+        }
+        Relationships: []
+      }
+      stripe_customers: {
+        Row: {
+          id: string
+          latest_address: Json | null
+          latest_currency: string | null
+          plan_active: boolean
+          plan_expires: number | null
+          stripe_customer_id: string | null
+          subscription_id: string | null
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          latest_address?: Json | null
+          latest_currency?: string | null
+          plan_active?: boolean
+          plan_expires?: number | null
+          stripe_customer_id?: string | null
+          subscription_id?: string | null
+          user_id: string
+        }
+        Update: {
+          id?: string
+          latest_address?: Json | null
+          latest_currency?: string | null
+          plan_active?: boolean
+          plan_expires?: number | null
+          stripe_customer_id?: string | null
+          subscription_id?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      stripe_events: {
+        Row: {
+          created_at: string | null
+          error_message: string | null
+          id: string
+          processed_at: string
+          retry_count: number | null
+          status: string | null
+          stripe_event_id: string
+          type: string
+        }
+        Insert: {
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          processed_at: string
+          retry_count?: number | null
+          status?: string | null
+          stripe_event_id: string
+          type: string
+        }
+        Update: {
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          processed_at?: string
+          retry_count?: number | null
+          status?: string | null
+          stripe_event_id?: string
+          type?: string
         }
         Relationships: []
       }
