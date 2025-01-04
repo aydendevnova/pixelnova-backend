@@ -58,8 +58,6 @@ app.use(
   })
 );
 
-// This webhook must be before the app.use(express.json())
-
 app.post(
   "/api/webhook",
   express.raw({ type: "application/json" }),
@@ -129,8 +127,6 @@ app.post(
     }
   }
 );
-
-app.use(express.json());
 
 const MAGIC_PRIME = 0x1f7b3c5d;
 
@@ -223,136 +219,147 @@ const aiLimiter = rateLimit({
   max: 10, // Limit each IP to 10 requests per hour
 });
 
-app.post("/api/generate-image", aiLimiter, async (req, res) => {
-  try {
-    const { prompt } = req.body;
-
-    if (!prompt) {
-      return res.status(400).json({ error: "Prompt is required" });
-    }
-
-    const response = await openai.images.generate({
-      model: "dall-e-3",
-      prompt: `${PIXEL_ART_INJECTION} ${prompt}`,
-      n: 1,
-      size: "1024x1024",
-    });
-
-    const imageUrl = response.data?.[0]?.url;
-    if (!imageUrl) {
-      return res.status(500).json({ error: "Failed to generate image URL" });
-    }
-
-    // Fetch the image from the URL
-    const imageResponse = await fetch(imageUrl);
-    if (!imageResponse.ok) {
-      throw new Error("Failed to fetch image from OpenAI");
-    }
-
-    const imageBuffer = await imageResponse.arrayBuffer();
-
-    // Set appropriate headers and send the image buffer
-    res.setHeader("Content-Type", "image/png");
-    res.setHeader(
-      "Content-Disposition",
-      'attachment; filename="generated-image.png"'
-    );
-    res.send(Buffer.from(imageBuffer));
-  } catch (error) {
-    console.error("Error generating image:", error);
-    return res.status(500).json({ error: "Failed to generate image" });
-  }
-});
-
-app.patch("/api/update-account", upload.single("image"), (req, res) => {
-  (async () => {
+app.post(
+  "/api/generate-image",
+  express.json({ type: "application/json" }),
+  aiLimiter,
+  async (req, res) => {
     try {
-      const { user, supabase } = await withAuth(req);
-      const { fullName, username, website } = req.body;
+      const { prompt } = req.body;
 
-      const result = updateAccountSchema.safeParse({
-        fullName,
-        username,
-        website,
+      if (!prompt) {
+        return res.status(400).json({ error: "Prompt is required" });
+      }
+
+      const response = await openai.images.generate({
+        model: "dall-e-3",
+        prompt: `${PIXEL_ART_INJECTION} ${prompt}`,
+        n: 1,
+        size: "1024x1024",
       });
 
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Invalid input format",
-          details: result.error.format(),
+      const imageUrl = response.data?.[0]?.url;
+      if (!imageUrl) {
+        return res.status(500).json({ error: "Failed to generate image URL" });
+      }
+
+      // Fetch the image from the URL
+      const imageResponse = await fetch(imageUrl);
+      if (!imageResponse.ok) {
+        throw new Error("Failed to fetch image from OpenAI");
+      }
+
+      const imageBuffer = await imageResponse.arrayBuffer();
+
+      // Set appropriate headers and send the image buffer
+      res.setHeader("Content-Type", "image/png");
+      res.setHeader(
+        "Content-Disposition",
+        'attachment; filename="generated-image.png"'
+      );
+      res.send(Buffer.from(imageBuffer));
+    } catch (error) {
+      console.error("Error generating image:", error);
+      return res.status(500).json({ error: "Failed to generate image" });
+    }
+  }
+);
+
+app.patch(
+  "/api/update-account",
+  express.json({ type: "application/json" }),
+  upload.single("image"),
+  (req, res) => {
+    (async () => {
+      try {
+        const { user, supabase } = await withAuth(req);
+        const { fullName, username, website } = req.body;
+
+        const result = updateAccountSchema.safeParse({
+          fullName,
+          username,
+          website,
         });
-      }
 
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", user.id)
-        .single();
+        if (!result.success) {
+          return res.status(400).json({
+            error: "Invalid input format",
+            details: result.error.format(),
+          });
+        }
 
-      if (profileError || !profile) {
-        throw profileError || new Error("Profile not found");
-      }
-
-      const usernameSanitized = username?.toLowerCase().trim();
-      const websiteSanitized = website?.toLowerCase().trim();
-
-      // Check blacklisted usernames and sites
-      if (
-        usernameSanitized &&
-        (BLACKLISTED_USERNAMES.includes(usernameSanitized) ||
-          BLACKLISTED_SITES.some((site) => usernameSanitized.includes(site)))
-      ) {
-        return res.status(400).json({ error: "Username is blacklisted" });
-      }
-
-      // Check username availability
-      if (usernameSanitized && usernameSanitized !== profile.username) {
-        const { data: existingUser } = await supabase
+        const { data: profile, error: profileError } = await supabase
           .from("profiles")
-          .select("username")
-          .eq("username", usernameSanitized)
+          .select("*")
+          .eq("id", user.id)
           .single();
 
-        if (existingUser) {
-          return res.status(400).json({ error: "Username is already taken" });
+        if (profileError || !profile) {
+          throw profileError || new Error("Profile not found");
         }
+
+        const usernameSanitized = username?.toLowerCase().trim();
+        const websiteSanitized = website?.toLowerCase().trim();
+
+        // Check blacklisted usernames and sites
+        if (
+          usernameSanitized &&
+          (BLACKLISTED_USERNAMES.includes(usernameSanitized) ||
+            BLACKLISTED_SITES.some((site) => usernameSanitized.includes(site)))
+        ) {
+          return res.status(400).json({ error: "Username is blacklisted" });
+        }
+
+        // Check username availability
+        if (usernameSanitized && usernameSanitized !== profile.username) {
+          const { data: existingUser } = await supabase
+            .from("profiles")
+            .select("username")
+            .eq("username", usernameSanitized)
+            .single();
+
+          if (existingUser) {
+            return res.status(400).json({ error: "Username is already taken" });
+          }
+        }
+
+        if (
+          websiteSanitized &&
+          BLACKLISTED_SITES.some((site) => websiteSanitized.includes(site))
+        ) {
+          return res.status(400).json({ error: "Website is blacklisted" });
+        }
+
+        // Update profile
+        const { error: updateError } = await supabase
+          .from("profiles")
+          .update({
+            full_name: fullName?.trim() ?? profile.full_name,
+            username: usernameSanitized ?? profile.username,
+            website: websiteSanitized ?? profile.website,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", user.id);
+
+        if (updateError) {
+          throw updateError;
+        }
+
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("Update account error:", err);
+        res.status(500).json({
+          error: "Failed to update account",
+          message: err instanceof Error ? err.message : "Unknown error",
+        });
       }
-
-      if (
-        websiteSanitized &&
-        BLACKLISTED_SITES.some((site) => websiteSanitized.includes(site))
-      ) {
-        return res.status(400).json({ error: "Website is blacklisted" });
-      }
-
-      // Update profile
-      const { error: updateError } = await supabase
-        .from("profiles")
-        .update({
-          full_name: fullName?.trim() ?? profile.full_name,
-          username: usernameSanitized ?? profile.username,
-          website: websiteSanitized ?? profile.website,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", user.id);
-
-      if (updateError) {
-        throw updateError;
-      }
-
-      return res.status(200).json({ success: true });
-    } catch (err) {
-      console.error("Update account error:", err);
-      res.status(500).json({
-        error: "Failed to update account",
-        message: err instanceof Error ? err.message : "Unknown error",
-      });
-    }
-  })();
-});
+    })();
+  }
+);
 
 app.post(
   "/api/check-username",
+  express.json({ type: "application/json" }),
   (req: express.Request, res: express.Response) => {
     (async () => {
       try {
@@ -426,57 +433,65 @@ function generateServerNonce(): string {
 }
 
 // Replace the existing /api/estimate-grid-size endpoint
-app.post("/api/estimate-grid-size", async (req, res) => {
-  try {
-    const { user } = await withAuth(req);
-    const timestamp = Math.floor(Date.now() / 1000);
-    const serverNonce = generateServerNonce();
+app.post(
+  "/api/estimate-grid-size",
+  express.json({ type: "application/json" }),
+  async (req, res) => {
+    try {
+      const { user } = await withAuth(req);
+      const timestamp = Math.floor(Date.now() / 1000);
+      const serverNonce = generateServerNonce();
 
-    await nonceCache.cacheNonce(user.id, serverNonce, 30); // 30 second TTL
+      await nonceCache.cacheNonce(user.id, serverNonce, 30); // 30 second TTL
 
-    const key = generateImageKey(user.id, timestamp, serverNonce);
+      const key = generateImageKey(user.id, timestamp, serverNonce);
 
-    res.status(200).json({
-      a: key,
-      b: timestamp,
-      c: serverNonce,
-      authorized: true,
-    });
-  } catch (err) {
-    console.error("Estimate grid size error:", err);
-    res.status(500).json({
-      error: "Failed to estimate grid size",
-      message: err instanceof Error ? err.message : "Unknown error",
-    });
+      res.status(200).json({
+        a: key,
+        b: timestamp,
+        c: serverNonce,
+        authorized: true,
+      });
+    } catch (err) {
+      console.error("Estimate grid size error:", err);
+      res.status(500).json({
+        error: "Failed to estimate grid size",
+        message: err instanceof Error ? err.message : "Unknown error",
+      });
+    }
   }
-});
+);
 
-app.post("/api/downscale-image", async (req, res) => {
-  try {
-    await withCredits(req, 5);
-    const { user, supabase } = await withAuth(req);
-    const timestamp = Math.floor(Date.now() / 1000);
-    const serverNonce = generateServerNonce();
+app.post(
+  "/api/downscale-image",
+  express.json({ type: "application/json" }),
+  async (req, res) => {
+    try {
+      await withCredits(req, 5);
+      const { user, supabase } = await withAuth(req);
+      const timestamp = Math.floor(Date.now() / 1000);
+      const serverNonce = generateServerNonce();
 
-    // Store nonce in Redis or similar with short TTL
-    await nonceCache.cacheNonce(user.id, serverNonce, 30); // 30 second TTL
+      // Store nonce in Redis or similar with short TTL
+      await nonceCache.cacheNonce(user.id, serverNonce, 30); // 30 second TTL
 
-    const key = generateImageKey(user.id, timestamp, serverNonce);
-    res.json({
-      a: key,
-      b: timestamp,
-      c: serverNonce,
-    });
+      const key = generateImageKey(user.id, timestamp, serverNonce);
+      res.json({
+        a: key,
+        b: timestamp,
+        c: serverNonce,
+      });
 
-    await spendCredits(user.id, supabase, 5);
-  } catch (err) {
-    console.error("Downscale image error:", err);
-    res.status(500).json({
-      error: "Failed to downscale image",
-      message: err instanceof Error ? err.message : "Unknown error",
-    });
+      await spendCredits(user.id, supabase, 5);
+    } catch (err) {
+      console.error("Downscale image error:", err);
+      res.status(500).json({
+        error: "Failed to downscale image",
+        message: err instanceof Error ? err.message : "Unknown error",
+      });
+    }
   }
-});
+);
 
 // Add credits check middleware for protected operations
 const withCredits = async (req: express.Request, cost: number) => {
@@ -531,50 +546,54 @@ async function spendCredits(
   }
 }
 
-app.post("/api/generate-image", async (req, res) => {
-  try {
-    const { user, supabase } = await withAuth(req);
-    await withCredits(req, 40); // Cost: 40 credits
-    const { prompt } = req.body;
+app.post(
+  "/api/generate-image",
+  express.json({ type: "application/json" }),
+  async (req, res) => {
+    try {
+      const { user, supabase } = await withAuth(req);
+      await withCredits(req, 40); // Cost: 40 credits
+      const { prompt } = req.body;
 
-    if (!prompt) {
-      return res.status(400).json({ error: "Prompt is required" });
+      if (!prompt) {
+        return res.status(400).json({ error: "Prompt is required" });
+      }
+
+      const response = await openai.images.generate({
+        model: "dall-e-3",
+        prompt: `${PIXEL_ART_INJECTION} ${prompt}`,
+        n: 1,
+        size: "1024x1024",
+      });
+
+      const imageUrl = response.data?.[0]?.url;
+      if (!imageUrl) {
+        return res.status(500).json({ error: "Failed to generate image URL" });
+      }
+
+      // Fetch the image from the URL
+      const imageResponse = await fetch(imageUrl);
+      if (!imageResponse.ok) {
+        throw new Error("Failed to fetch image from OpenAI");
+      }
+
+      const imageBuffer = await imageResponse.arrayBuffer();
+
+      await spendCredits(user.id, supabase, 40);
+
+      // Set appropriate headers and send the image buffer
+      res.setHeader("Content-Type", "image/png");
+      res.setHeader(
+        "Content-Disposition",
+        'attachment; filename="generated-image.png"'
+      );
+      res.send(Buffer.from(imageBuffer));
+    } catch (error) {
+      console.error("Error generating image:", error);
+      return res.status(500).json({ error: "Failed to generate image" });
     }
-
-    const response = await openai.images.generate({
-      model: "dall-e-3",
-      prompt: `${PIXEL_ART_INJECTION} ${prompt}`,
-      n: 1,
-      size: "1024x1024",
-    });
-
-    const imageUrl = response.data?.[0]?.url;
-    if (!imageUrl) {
-      return res.status(500).json({ error: "Failed to generate image URL" });
-    }
-
-    // Fetch the image from the URL
-    const imageResponse = await fetch(imageUrl);
-    if (!imageResponse.ok) {
-      throw new Error("Failed to fetch image from OpenAI");
-    }
-
-    const imageBuffer = await imageResponse.arrayBuffer();
-
-    await spendCredits(user.id, supabase, 40);
-
-    // Set appropriate headers and send the image buffer
-    res.setHeader("Content-Type", "image/png");
-    res.setHeader(
-      "Content-Disposition",
-      'attachment; filename="generated-image.png"'
-    );
-    res.send(Buffer.from(imageBuffer));
-  } catch (error) {
-    console.error("Error generating image:", error);
-    return res.status(500).json({ error: "Failed to generate image" });
   }
-});
+);
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
@@ -687,45 +706,49 @@ async function processStripeEvent(
   }
 }
 
-app.post("/api/checkout", async (req, res) => {
-  try {
-    const { priceId } = req.body;
-    if (!priceId) {
-      return res.status(400).json({ error: "Invalid request" });
-    }
+app.post(
+  "/api/checkout",
+  express.json({ type: "application/json" }),
+  async (req, res) => {
+    try {
+      const { priceId } = req.body;
+      if (!priceId) {
+        return res.status(400).json({ error: "Invalid request" });
+      }
 
-    const { user } = await withAuth(req);
-    if (!user) {
-      return res.status(401).json({ error: "User not found" });
-    }
+      const { user } = await withAuth(req);
+      if (!user) {
+        return res.status(401).json({ error: "User not found" });
+      }
 
-    // verify price ID is valid
-    const price = await stripe.prices.retrieve(priceId);
-    if (!price) {
-      return res.status(400).json({ error: "Invalid price ID" });
-    }
+      // verify price ID is valid
+      const price = await stripe.prices.retrieve(priceId);
+      if (!price) {
+        return res.status(400).json({ error: "Invalid price ID" });
+      }
 
-    const session = await stripe.checkout.sessions.create({
-      metadata: {
-        user_id: user.id,
-        price_id: priceId,
-      },
-      customer_email: user.email,
-      payment_method_types: ["card"],
-      line_items: [
-        {
-          price: priceId,
-          quantity: 1,
+      const session = await stripe.checkout.sessions.create({
+        metadata: {
+          user_id: user.id,
+          price_id: priceId,
         },
-      ],
-      mode: "payment",
-      success_url: `${req.headers.origin}/success`,
-      cancel_url: `${req.headers.origin}/cancel`,
-    });
+        customer_email: user.email,
+        payment_method_types: ["card"],
+        line_items: [
+          {
+            price: priceId,
+            quantity: 1,
+          },
+        ],
+        mode: "payment",
+        success_url: `${req.headers.origin}/success`,
+        cancel_url: `${req.headers.origin}/cancel`,
+      });
 
-    return res.json({ id: session.id });
-  } catch (e) {
-    console.error(e);
-    return res.status(500).json({ error: e });
+      return res.json({ id: session.id });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: e });
+    }
   }
-});
+);
