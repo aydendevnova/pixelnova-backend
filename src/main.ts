@@ -19,6 +19,8 @@ dotenv.config();
 import { stripe } from "./utils/stripe";
 
 const app = express();
+app.set("trust proxy", 1);
+
 const upload = multer({
   limits: {
     fileSize: 5 * 1024 * 1024, // 5MB limit
@@ -54,9 +56,22 @@ app.use(
       "https://editor.pixelnova.app", // Cloudflare Pages domain
     ],
     methods: ["GET", "POST", "PUT", "OPTIONS", "PATCH", "DELETE"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "stripe-signature",
+      "X-Forwarded-For",
+    ],
   })
 );
+
+// Always allow webhook requests to bypass rate limiting
+app.use((req, res, next) => {
+  if (req.path === "/api/webhook") {
+    return next();
+  }
+  return apiLimiter(req, res, next);
+});
 
 app.post(
   "/api/webhook",
@@ -102,20 +117,28 @@ app.post(
         .single();
 
       if (existingEvent) {
-        console.log(`Event ${eventId} already processed, skipping`);
-        return;
+        await supabase.from("logs").insert({
+          type: "stripe_event_already_processed",
+          message: `Event ${eventId} already processed in DB. This may be a duplicate and the user will have extra credits.`,
+        });
       }
 
       // Process the event
-      await processStripeEvent(event, supabase);
-
-      // Record successful processing
-      await supabase.from("stripe_events").insert({
-        stripe_event_id: eventId,
-        type: event.type,
-        processed_at: new Date().toISOString(),
-        error_message: null,
-      });
+      try {
+        await processStripeEvent(event, supabase);
+        // Record successful processing
+        await supabase.from("stripe_events").insert({
+          stripe_event_id: eventId,
+          type: event.type,
+          processed_at: new Date().toISOString(),
+          error_message: null,
+        });
+      } catch (e) {
+        await supabase.from("logs").insert({
+          type: "stripe_event_processing_error",
+          message: `Error processing event ${eventId}: ${e}`,
+        });
+      }
 
       // Return a 200 response quickly to acknowledge receipt
       res.status(200).json({ received: true });
@@ -206,8 +229,10 @@ const PIXEL_ART_INJECTION =
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  max: 200, // Limit each IP to 200 requests per windowMs
   message: { error: "Too many requests, please try again later." },
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
 });
 
 // Apply to all routes
@@ -216,7 +241,9 @@ app.use(apiLimiter);
 // Stricter limit for image generation
 const aiLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 10, // Limit each IP to 10 requests per hour
+  max: 70, // Limit each IP to 70 requests per hour
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
 app.post(
