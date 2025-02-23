@@ -151,32 +151,19 @@ app.post(
   }
 );
 
-const MAGIC_PRIME = 0x1f7b3c5d;
-
 function generateImageKey(
   userId: string,
   timestamp: number,
   serverNonce: string
 ): string {
-  // Simple concatenation
+  // Super simple key generation for testing
   const data = `${userId}:${timestamp}:${serverNonce}`;
-
-  // First hash
-  const h1 = crypto.createHash("sha256");
-  h1.update(data);
-  const hash1 = Buffer.from(h1.digest());
-
-  // XOR each byte with our magic number
-  for (let i = 0; i < hash1.length; i++) {
-    hash1[i] ^= (MAGIC_PRIME >> i % 8) & 0xff;
+  let hash = 0;
+  for (let i = 0; i < data.length; i++) {
+    hash = (hash << 5) - hash + data.charCodeAt(i);
+    hash = hash & hash; // Convert to 32-bit integer
   }
-
-  // Second hash
-  const h2 = crypto.createHash("sha256");
-  h2.update(hash1);
-  const result = h2.digest("hex");
-
-  return result;
+  return Math.abs(hash).toString(16).padStart(8, "0");
 }
 
 // Helper function to handle protected routes
