@@ -1,3 +1,35 @@
+import dotenv from "dotenv";
+
+dotenv.config();
+
+if (!process.env.HF_TOKEN) {
+  throw new Error("HF_TOKEN is not set");
+}
+
+if (!process.env.OPEN_API_KEY) {
+  throw new Error("OPEN_API_KEY is not set");
+}
+
+if (!process.env.SUPABASE_URL) {
+  throw new Error("SUPABASE_URL is not set");
+}
+
+if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  throw new Error("SUPABASE_SERVICE_ROLE_KEY is not set");
+}
+
+if (!process.env.STRIPE_WEBHOOK_SECRET) {
+  throw new Error("STRIPE_WEBHOOK_SECRET is not set");
+}
+
+if (!process.env.STRIPE_SECRET_KEY) {
+  throw new Error("STRIPE_SECRET_KEY is not set");
+}
+
+if (!process.env.STRIPE_PRICE_ID_PRO) {
+  throw new Error("STRIPE_PRICE_ID_PRO is not set");
+}
+
 import express from "express";
 import cors from "cors";
 import multer from "multer";
@@ -6,7 +38,6 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { BLACKLISTED_USERNAMES } from "./const/blacklisted-usernames";
 import { BLACKLISTED_SITES } from "./const/blacklisted-sites";
 import { checkUsernameSchema, updateAccountSchema } from "./types/types";
-import dotenv from "dotenv";
 
 import OpenAI from "openai";
 import rateLimit from "express-rate-limit";
@@ -14,9 +45,8 @@ import crypto from "crypto";
 import { nonceCache } from "./utils/nonce-cache";
 import { type Database } from "./lib/types_db";
 
-dotenv.config();
-// Must come after dotenv.config()
 import { stripe } from "./utils/stripe";
+import { downscaleImage8x, generatePixelSprite } from "./lib/pixel-art-redmond";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -481,7 +511,6 @@ app.post(
   express.json({ type: "application/json" }),
   async (req, res) => {
     try {
-      await withCredits(req, 5);
       const { user, supabase } = await withAuth(req);
       const timestamp = Math.floor(Date.now() / 1000);
       const serverNonce = generateServerNonce();
@@ -496,7 +525,28 @@ app.post(
         c: serverNonce,
       });
 
-      await spendCredits(user.id, supabase, 5);
+      // await spendCredits(user.id, supabase, 5);
+      // increment generation count
+      // get profile
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("generation_count")
+        .eq("id", user.id)
+        .single();
+      if (profileError) {
+        throw profileError;
+      }
+      if (!profile) {
+        throw new Error("Profile not found");
+      }
+      // increment generation count
+      const { error: updateError } = await supabase
+        .from("profiles")
+        .update({ generation_count: (profile?.generation_count ?? 0) + 1 })
+        .eq("id", user.id);
+      if (updateError) {
+        throw updateError;
+      }
     } catch (err) {
       console.error("Downscale image error:", err);
       res.status(500).json({
@@ -507,23 +557,23 @@ app.post(
   }
 );
 
-// Add credits check middleware for protected operations
-const withCredits = async (req: express.Request, cost: number) => {
-  const { user, supabase } = await withAuth(req);
+// // Add credits check middleware for protected operations
+// const withCredits = async (req: express.Request, cost: number) => {
+//   const { user, supabase } = await withAuth(req);
 
-  const { data: profile, error } = await supabase
-    .from("profiles")
-    .select("credits")
-    .eq("id", user.id)
-    .single();
+//   const { data: profile, error } = await supabase
+//     .from("profiles")
+//     .select("credits")
+//     .eq("id", user.id)
+//     .single();
 
-  if (error) throw error;
-  if (!profile || profile.credits < cost) {
-    throw new Error("Insufficient credits");
-  }
+//   if (error) throw error;
+//   if (!profile) {
+//     throw new Error("Profile not found");
+//   }
 
-  return { user, supabase, credits: profile.credits };
-};
+//   return { user, supabase, credits: profile.generation_count };
+// };
 
 async function spendCredits(
   userId: string,
@@ -566,42 +616,43 @@ app.post(
   async (req, res) => {
     try {
       const { user, supabase } = await withAuth(req);
-      await withCredits(req, 40); // Cost: 40 credits
       const { prompt } = req.body;
 
-      if (!prompt) {
-        return res.status(400).json({ error: "Prompt is required" });
-      }
+      return res.status(400).json({ error: "Not implemented" });
 
-      const response = await openai.images.generate({
-        model: "dall-e-3",
-        prompt: `${PIXEL_ART_INJECTION} ${prompt}`,
-        n: 1,
-        size: "1024x1024",
-      });
+      // if (!prompt) {
+      //   return res.status(400).json({ error: "Prompt is required" });
+      // }
 
-      const imageUrl = response.data?.[0]?.url;
-      if (!imageUrl) {
-        return res.status(500).json({ error: "Failed to generate image URL" });
-      }
+      // const response = await openai.images.generate({
+      //   model: "dall-e-3",
+      //   prompt: `${PIXEL_ART_INJECTION} ${prompt}`,
+      //   n: 1,
+      //   size: "1024x1024",
+      // });
 
-      // Fetch the image from the URL
-      const imageResponse = await fetch(imageUrl);
-      if (!imageResponse.ok) {
-        throw new Error("Failed to fetch image from OpenAI");
-      }
+      // const imageUrl = response.data?.[0]?.url;
+      // if (!imageUrl) {
+      //   return res.status(500).json({ error: "Failed to generate image URL" });
+      // }
 
-      const imageBuffer = await imageResponse.arrayBuffer();
+      // // Fetch the image from the URL
+      // const imageResponse = await fetch(imageUrl);
+      // if (!imageResponse.ok) {
+      //   throw new Error("Failed to fetch image from OpenAI");
+      // }
 
-      await spendCredits(user.id, supabase, 40);
+      // const imageBuffer = await imageResponse.arrayBuffer();
 
-      // Set appropriate headers and send the image buffer
-      res.setHeader("Content-Type", "image/png");
-      res.setHeader(
-        "Content-Disposition",
-        'attachment; filename="generated-image.png"'
-      );
-      res.send(Buffer.from(imageBuffer));
+      // await spendCredits(user.id, supabase, 40);
+
+      // // Set appropriate headers and send the image buffer
+      // res.setHeader("Content-Type", "image/png");
+      // res.setHeader(
+      //   "Content-Disposition",
+      //   'attachment; filename="generated-image.png"'
+      // );
+      // res.send(Buffer.from(imageBuffer));
     } catch (error) {
       console.error("Error generating image:", error);
       return res.status(500).json({ error: "Failed to generate image" });
@@ -650,10 +701,14 @@ async function processStripeEvent(
       }
 
       let amount = 0;
+      let tier: Database["public"]["Enums"]["user_tier"] = "NONE";
+
       if (priceId === process.env.STRIPE_PRICE_ID_STARTER) {
         amount = 2000;
+        tier = "NONE";
       } else if (priceId === process.env.STRIPE_PRICE_ID_PRO) {
         amount = 5000;
+        tier = "PRO";
       } else {
         console.error("Invalid price id");
         throw new Error("Invalid price id");
@@ -662,7 +717,7 @@ async function processStripeEvent(
       // get their credits
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
-        .select("credits")
+        .select("generation_count")
         .eq("id", userId)
         .single();
 
@@ -678,13 +733,15 @@ async function processStripeEvent(
         throw new Error("User profile not found");
       }
 
-      const existingCredits = profile.credits ?? 0;
+      const existingCredits = profile.generation_count ?? 0;
 
-      // Update their credits
+      // Update their credits and tier
       const { error: updateError } = await supabase
         .from("profiles")
         .update({
-          credits: existingCredits + amount,
+          generation_count: existingCredits + amount,
+          tier: tier,
+          updated_at: new Date().toISOString(),
         })
         .eq("id", userId);
 
@@ -695,7 +752,7 @@ async function processStripeEvent(
         try {
           await supabase.from("logs").insert({
             type: "credit_added",
-            message: `User ${userId} purchased ${amount} credits.`,
+            message: `User ${userId} purchased ${amount} credits and set tier to ${tier}.`,
           });
         } catch (error) {
           console.error("Error logging credit purchase:", error);
@@ -766,3 +823,37 @@ app.post(
     }
   }
 );
+
+// API endpoint to generate and process image
+app.post("/generate-pixel-art", async (req, res) => {
+  // require auth
+  const { user } = await withAuth(req);
+  if (!user) {
+    return res.status(401).json({ error: "User not found" });
+  }
+
+  //TODO: Check their subscription status and total generations for the month
+
+  try {
+    const prompt = req.body.prompt || "Astronaut riding a horse";
+    const steps = req.body.steps || 5;
+
+    const imgBuffer = await generatePixelSprite(prompt, steps);
+    const processedImage = await downscaleImage8x(imgBuffer);
+
+    // save to supabase storage
+    // TODO: Save to user storage
+    // const { data, error } = await supabase.storage
+    // .from("pixel-art")
+    // .upload(`${user.id}/${Date.now()}.png`, processedImage);
+
+    // Send the processed image
+    res.set("Content-Type", "image/png");
+    res.send(processedImage);
+  } catch (error) {
+    console.error("Error:", error);
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error occurred";
+    res.status(500).json({ error: errorMessage });
+  }
+});
