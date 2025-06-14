@@ -47,6 +47,7 @@ import { type Database } from "./lib/types_db";
 
 import { stripe } from "./utils/stripe";
 import { downscaleImage8x, generatePixelSprite } from "./lib/pixel-art-redmond";
+import sharp from "sharp";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -263,52 +264,6 @@ const aiLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-app.post(
-  "/api/generate-image",
-  express.json({ type: "application/json" }),
-  aiLimiter,
-  async (req, res) => {
-    try {
-      const { prompt } = req.body;
-
-      if (!prompt) {
-        return res.status(400).json({ error: "Prompt is required" });
-      }
-
-      const response = await openai.images.generate({
-        model: "dall-e-3",
-        prompt: `${PIXEL_ART_INJECTION} ${prompt}`,
-        n: 1,
-        size: "1024x1024",
-      });
-
-      const imageUrl = response.data?.[0]?.url;
-      if (!imageUrl) {
-        return res.status(500).json({ error: "Failed to generate image URL" });
-      }
-
-      // Fetch the image from the URL
-      const imageResponse = await fetch(imageUrl);
-      if (!imageResponse.ok) {
-        throw new Error("Failed to fetch image from OpenAI");
-      }
-
-      const imageBuffer = await imageResponse.arrayBuffer();
-
-      // Set appropriate headers and send the image buffer
-      res.setHeader("Content-Type", "image/png");
-      res.setHeader(
-        "Content-Disposition",
-        'attachment; filename="generated-image.png"'
-      );
-      res.send(Buffer.from(imageBuffer));
-    } catch (error) {
-      console.error("Error generating image:", error);
-      return res.status(500).json({ error: "Failed to generate image" });
-    }
-  }
-);
-
 app.patch(
   "/api/update-account",
   express.json({ type: "application/json" }),
@@ -506,56 +461,78 @@ app.post(
   }
 );
 
-app.post(
-  "/api/downscale-image",
-  express.json({ type: "application/json" }),
-  async (req, res) => {
-    try {
-      const { user, supabase } = await withAuth(req);
-      const timestamp = Math.floor(Date.now() / 1000);
-      const serverNonce = generateServerNonce();
-
-      // Store nonce in Redis or similar with short TTL
-      await nonceCache.cacheNonce(user.id, serverNonce, 30); // 30 second TTL
-
-      const key = generateImageKey(user.id, timestamp, serverNonce);
-      res.json({
-        a: key,
-        b: timestamp,
-        c: serverNonce,
-      });
-
-      // await spendCredits(user.id, supabase, 5);
-      // increment generation count
-      // get profile
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("generation_count")
-        .eq("id", user.id)
-        .single();
-      if (profileError) {
-        throw profileError;
-      }
-      if (!profile) {
-        throw new Error("Profile not found");
-      }
-      // increment generation count
-      const { error: updateError } = await supabase
-        .from("profiles")
-        .update({ generation_count: (profile?.generation_count ?? 0) + 1 })
-        .eq("id", user.id);
-      if (updateError) {
-        throw updateError;
-      }
-    } catch (err) {
-      console.error("Downscale image error:", err);
-      res.status(500).json({
-        error: "Failed to downscale image",
-        message: err instanceof Error ? err.message : "Unknown error",
-      });
+app.post("/api/downscale-image", upload.single("image"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "No image file provided" });
     }
+
+    const { user, supabase } = await withAuth(req);
+    const timestamp = Math.floor(Date.now() / 1000);
+    const serverNonce = generateServerNonce();
+
+    // Store nonce in Redis or similar with short TTL
+    await nonceCache.cacheNonce(user.id, serverNonce, 30); // 30 second TTL
+
+    const key = generateImageKey(user.id, timestamp, serverNonce);
+
+    // Process the image using sharp
+    const processedBuffer = await sharp(req.file.buffer)
+      .resize(512, 512, {
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      .png({
+        colors: 40, // Reduce to 40 colors
+        dither: 0, // No dithering to maintain crisp edges
+        palette: true, // Use palette-based quantization
+      })
+      .modulate({
+        brightness: 1,
+        saturation: 1.1,
+        hue: 0,
+        lightness: 1,
+      })
+      .toBuffer();
+
+    // Convert buffer to base64 for JSON response
+    const base64Image = processedBuffer.toString("base64");
+
+    res.json({
+      a: key,
+      b: timestamp,
+      c: serverNonce,
+      image: `data:image/png;base64,${base64Image}`,
+    });
+
+    // increment generation count
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("generation_count")
+      .eq("id", user.id)
+      .single();
+    if (profileError) {
+      throw profileError;
+    }
+    if (!profile) {
+      throw new Error("Profile not found");
+    }
+    // increment generation count
+    const { error: updateError } = await supabase
+      .from("profiles")
+      .update({ generation_count: (profile?.generation_count ?? 0) + 1 })
+      .eq("id", user.id);
+    if (updateError) {
+      throw updateError;
+    }
+  } catch (err) {
+    console.error("Downscale image error:", err);
+    res.status(500).json({
+      error: "Failed to downscale image",
+      message: err instanceof Error ? err.message : "Unknown error",
+    });
   }
-);
+});
 
 // // Add credits check middleware for protected operations
 // const withCredits = async (req: express.Request, cost: number) => {
@@ -609,56 +586,6 @@ async function spendCredits(
     throw deductError;
   }
 }
-
-app.post(
-  "/api/generate-image",
-  express.json({ type: "application/json" }),
-  async (req, res) => {
-    try {
-      const { user, supabase } = await withAuth(req);
-      const { prompt } = req.body;
-
-      return res.status(400).json({ error: "Not implemented" });
-
-      // if (!prompt) {
-      //   return res.status(400).json({ error: "Prompt is required" });
-      // }
-
-      // const response = await openai.images.generate({
-      //   model: "dall-e-3",
-      //   prompt: `${PIXEL_ART_INJECTION} ${prompt}`,
-      //   n: 1,
-      //   size: "1024x1024",
-      // });
-
-      // const imageUrl = response.data?.[0]?.url;
-      // if (!imageUrl) {
-      //   return res.status(500).json({ error: "Failed to generate image URL" });
-      // }
-
-      // // Fetch the image from the URL
-      // const imageResponse = await fetch(imageUrl);
-      // if (!imageResponse.ok) {
-      //   throw new Error("Failed to fetch image from OpenAI");
-      // }
-
-      // const imageBuffer = await imageResponse.arrayBuffer();
-
-      // await spendCredits(user.id, supabase, 40);
-
-      // // Set appropriate headers and send the image buffer
-      // res.setHeader("Content-Type", "image/png");
-      // res.setHeader(
-      //   "Content-Disposition",
-      //   'attachment; filename="generated-image.png"'
-      // );
-      // res.send(Buffer.from(imageBuffer));
-    } catch (error) {
-      console.error("Error generating image:", error);
-      return res.status(500).json({ error: "Failed to generate image" });
-    }
-  }
-);
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
@@ -825,35 +752,58 @@ app.post(
 );
 
 // API endpoint to generate and process image
-app.post("/generate-pixel-art", async (req, res) => {
-  // require auth
-  const { user } = await withAuth(req);
-  if (!user) {
-    return res.status(401).json({ error: "User not found" });
+app.post(
+  "/api/generate-pixel-art",
+  express.json({ type: "application/json" }),
+  async (req, res) => {
+    // require auth
+    const { user, supabase } = await withAuth(req);
+    if (!user) {
+      return res.status(401).json({ error: "User not found" });
+    }
+
+    try {
+      // console.log("body", req.body);
+      // let prompt = req.body.prompt || "Astronaut riding a horse";
+      // const useOpenAI = req.body.useOpenAI || false;
+
+      // if (useOpenAI) {
+      //   // Make a call to open ai 4o mini to improve prompt
+      //   let improvedPrompt = await openai.chat.completions.create({
+      //     model: "gpt-4o-mini",
+      //     messages: [
+      //       {
+      //         role: "system",
+      //         content:
+      //           "You are a helpful assistant that improves prompts for pixel art generation. You are trying to optimize prompts for artificialguybr/PixelArtRedmond, which is a LoRA (Low-Rank Adaptation) model fine-tuned on top of Stable Diffusion XL 1.0 (SDXL 1.0), for pixel art generation. The LoRA has not generalized well for extremely underspecified prompts — it requires more deliberate conditioning. SDXL 1.0 + PixelArtRedmond LoRA is trained for: Pixel art style Likely character-centric compositions Coloring-book-like line art Limited generalization across diverse scenes.",
+      //       },
+      //       {
+      //         role: "user",
+      //         content: `Improve the following prompt for pixel art generation: ${prompt}`,
+      //       },
+      //     ],
+      //   });
+      //   prompt = improvedPrompt.choices[0].message.content ?? prompt;
+      //   console.log("improvedPrompt", prompt);
+      // }
+
+      // const imgBuffer = await generatePixelSprite(prompt);
+      // const processedImage = await downscaleImage8x(imgBuffer);
+
+      // // save to supabase storage
+      // const { data, error } = await supabase.storage
+      //   .from("pixel-art")
+      //   .upload(`${user.id}/${Date.now()}.png`, processedImage);
+
+      // // Send the processed image
+      // res.set("Content-Type", "image/png");
+      // res.send(processedImage);
+      res.status(200).json({ message: "Disabled in production" });
+    } catch (error) {
+      console.error("Error:", error);
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error occurred";
+      res.status(500).json({ error: errorMessage });
+    }
   }
-
-  //TODO: Check their subscription status and total generations for the month
-
-  try {
-    const prompt = req.body.prompt || "Astronaut riding a horse";
-    const steps = req.body.steps || 5;
-
-    const imgBuffer = await generatePixelSprite(prompt, steps);
-    const processedImage = await downscaleImage8x(imgBuffer);
-
-    // save to supabase storage
-    // TODO: Save to user storage
-    // const { data, error } = await supabase.storage
-    // .from("pixel-art")
-    // .upload(`${user.id}/${Date.now()}.png`, processedImage);
-
-    // Send the processed image
-    res.set("Content-Type", "image/png");
-    res.send(processedImage);
-  } catch (error) {
-    console.error("Error:", error);
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error occurred";
-    res.status(500).json({ error: errorMessage });
-  }
-});
+);

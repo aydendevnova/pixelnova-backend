@@ -15,14 +15,16 @@ export async function generatePixelSprite(
   size = 128 // final sprite edge in px
 ) {
   // PixelArt.Redmond was trained with the trigger `PixArFK`
-  const fullPrompt = prompt.includes("PixArFK") ? prompt : `PixArFK, ${prompt}`;
+  const fullPrompt = prompt.includes("PixArFK")
+    ? prompt
+    : `Pixel Art PixArFK Be detailed accurate and simple, centered, full body, centered, clean lines, ${prompt}`;
 
   const response = (await hf.textToImage({
     model: "artificialguybr/PixelArtRedmond", // LoRA + SDXL 1.0 are auto-fused
     inputs: fullPrompt,
     parameters: {
-      //   num_inference_steps: 8, // keep latency ≈ 1.8 s
-      //   guidance_scale: 1.5,
+      // num_inference_steps: 8, // keep latency ≈ 1.8 s
+      // guidance_scale: 1.5,
       negative_prompt: "3d render, realistic, blurry, noisy, photographic", // common clean-up
     },
   })) as unknown as Blob;
