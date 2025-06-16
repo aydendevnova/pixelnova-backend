@@ -627,62 +627,35 @@ async function processStripeEvent(
         throw new Error("Missing price id");
       }
 
-      let amount = 0;
       let tier: Database["public"]["Enums"]["user_tier"] = "NONE";
 
-      if (priceId === process.env.STRIPE_PRICE_ID_STARTER) {
-        amount = 2000;
-        tier = "NONE";
-      } else if (priceId === process.env.STRIPE_PRICE_ID_PRO) {
-        amount = 5000;
+      if (priceId === process.env.STRIPE_PRICE_ID_PRO) {
         tier = "PRO";
       } else {
         console.error("Invalid price id");
         throw new Error("Invalid price id");
       }
 
-      // get their credits
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("generation_count")
-        .eq("id", userId)
-        .single();
-
-      if (profileError) {
-        console.error("Error fetching user profile:", profileError);
-        throw new Error(
-          `Failed to fetch user profile: ${profileError.message}`
-        );
-      }
-
-      if (!profile) {
-        console.error("User profile not found");
-        throw new Error("User profile not found");
-      }
-
-      const existingCredits = profile.generation_count ?? 0;
-
-      // Update their credits and tier
+      // Update their tier
       const { error: updateError } = await supabase
         .from("profiles")
         .update({
-          generation_count: existingCredits + amount,
           tier: tier,
           updated_at: new Date().toISOString(),
         })
         .eq("id", userId);
 
       if (updateError) {
-        console.error("Error updating credits:", updateError);
+        console.error("Error updating tier:", updateError);
         throw updateError;
       } else {
         try {
           await supabase.from("logs").insert({
-            type: "credit_added",
-            message: `User ${userId} purchased ${amount} credits and set tier to ${tier}.`,
+            type: "tier_updated",
+            message: `User ${userId} updated tier to ${tier}.`,
           });
         } catch (error) {
-          console.error("Error logging credit purchase:", error);
+          console.error("Error logging tier update:", error);
         }
       }
 
@@ -691,6 +664,7 @@ async function processStripeEvent(
         stripe_customer_id: session.customer as string | null,
         user_id: userId,
         plan_active: true,
+        subscription_id: session.subscription as string | null,
         latest_address: session.customer_details?.address,
         latest_currency: session.customer_details?.address?.country,
       });
@@ -698,6 +672,59 @@ async function processStripeEvent(
       if (error) {
         console.error("Error updating stripe_customers:", error);
         throw error;
+      }
+      break;
+    }
+    case "customer.subscription.deleted": {
+      const subscription = event.data.object;
+
+      // Find the user associated with this subscription
+      const { data: customer, error: customerError } = await supabase
+        .from("stripe_customers")
+        .select("user_id")
+        .eq("subscription_id", subscription.id)
+        .single();
+
+      if (customerError || !customer) {
+        console.error("Error finding customer:", customerError);
+        throw new Error("Customer not found");
+      }
+
+      // Update user's tier to NONE
+      const { error: updateError } = await supabase
+        .from("profiles")
+        .update({
+          tier: "NONE",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", customer.user_id);
+
+      if (updateError) {
+        console.error("Error updating tier:", updateError);
+        throw updateError;
+      }
+
+      // Update stripe_customers table
+      const { error: customerUpdateError } = await supabase
+        .from("stripe_customers")
+        .update({
+          plan_active: false,
+          subscription_id: null,
+        })
+        .eq("user_id", customer.user_id);
+
+      if (customerUpdateError) {
+        console.error("Error updating stripe_customers:", customerUpdateError);
+        throw customerUpdateError;
+      }
+
+      try {
+        await supabase.from("logs").insert({
+          type: "tier_updated",
+          message: `User ${customer.user_id} subscription cancelled, tier set to NONE.`,
+        });
+      } catch (error) {
+        console.error("Error logging tier update:", error);
       }
       break;
     }
@@ -738,7 +765,7 @@ app.post(
             quantity: 1,
           },
         ],
-        mode: "payment",
+        mode: "subscription",
         success_url: `${req.headers.origin}/success`,
         cancel_url: `${req.headers.origin}/cancel`,
       });
@@ -804,6 +831,43 @@ app.post(
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error occurred";
       res.status(500).json({ error: errorMessage });
+    }
+  }
+);
+
+app.post(
+  "/api/create-portal-session",
+  express.json({ type: "application/json" }),
+  async (req, res) => {
+    try {
+      const { user, supabase } = await withAuth(req);
+      if (!user) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+
+      // Get the customer ID from our database
+      const { data: customer, error: customerError } = await supabase
+        .from("stripe_customers")
+        .select("stripe_customer_id")
+        .eq("user_id", user.id)
+        .single();
+
+      if (customerError || !customer?.stripe_customer_id) {
+        return res
+          .status(404)
+          .json({ error: "No associated Stripe customer found" });
+      }
+
+      // Create a Stripe Portal session
+      const portalSession = await stripe.billingPortal.sessions.create({
+        customer: customer.stripe_customer_id,
+        return_url: `${req.headers.origin}/pricing`,
+      });
+
+      return res.json({ url: portalSession.url });
+    } catch (error) {
+      console.error("[STRIPE PORTAL] Error:", error);
+      return res.status(500).json({ error: "Internal server error" });
     }
   }
 );

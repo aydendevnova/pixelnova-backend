@@ -9,36 +9,6 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
-      image_generation_jobs: {
-        Row: {
-          created_at: string | null
-          id: string
-          prompt: string
-          result_url: string | null
-          status: string
-          updated_at: string | null
-          user_id: string
-        }
-        Insert: {
-          created_at?: string | null
-          id?: string
-          prompt: string
-          result_url?: string | null
-          status: string
-          updated_at?: string | null
-          user_id: string
-        }
-        Update: {
-          created_at?: string | null
-          id?: string
-          prompt?: string
-          result_url?: string | null
-          status?: string
-          updated_at?: string | null
-          user_id?: string
-        }
-        Relationships: []
-      }
       logs: {
         Row: {
           created_at: string
@@ -60,82 +30,6 @@ export type Database = {
         }
         Relationships: []
       }
-      pictures: {
-        Row: {
-          created_at: string
-          id: number
-          name: string
-          tags: string[]
-          url: string
-          user_id: string
-        }
-        Insert: {
-          created_at?: string
-          id?: number
-          name?: string
-          tags: string[]
-          url: string
-          user_id: string
-        }
-        Update: {
-          created_at?: string
-          id?: number
-          name?: string
-          tags?: string[]
-          url?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "pictures_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      pixel_art: {
-        Row: {
-          created_at: string
-          id: number
-          layer_base64: string[]
-          layer_name: string[]
-          metadata: string
-          name: string
-          tags: string[]
-          user_id: string
-        }
-        Insert: {
-          created_at?: string
-          id?: number
-          layer_base64?: string[]
-          layer_name?: string[]
-          metadata?: string
-          name?: string
-          tags?: string[]
-          user_id: string
-        }
-        Update: {
-          created_at?: string
-          id?: number
-          layer_base64?: string[]
-          layer_name?: string[]
-          metadata?: string
-          name?: string
-          tags?: string[]
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "pixel_art_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       profiles: {
         Row: {
           alpha_tester: boolean
@@ -144,6 +38,7 @@ export type Database = {
           full_name: string | null
           generation_count: number
           id: string
+          suspended: boolean
           tier: Database["public"]["Enums"]["user_tier"]
           updated_at: string | null
           username: string | null
@@ -156,6 +51,7 @@ export type Database = {
           full_name?: string | null
           generation_count?: number
           id: string
+          suspended?: boolean
           tier?: Database["public"]["Enums"]["user_tier"]
           updated_at?: string | null
           username?: string | null
@@ -168,6 +64,7 @@ export type Database = {
           full_name?: string | null
           generation_count?: number
           id?: string
+          suspended?: boolean
           tier?: Database["public"]["Enums"]["user_tier"]
           updated_at?: string | null
           username?: string | null
