@@ -15,12 +15,12 @@ export async function generatePixelSprite(
   size = 128 // final sprite edge in px
 ) {
   // PixelArt.Redmond was trained with the trigger `PixArFK`
-  const fullPrompt = prompt.includes("PixArFK")
+  const fullPrompt = prompt.includes("Retro Pixel")
     ? prompt
-    : `Pixel Art PixArFK Be detailed accurate and simple, centered, full body, centered, clean lines, ${prompt}`;
+    : `Retro Pixel ${prompt}`;
 
   const response = (await hf.textToImage({
-    model: "artificialguybr/PixelArtRedmond", // LoRA + SDXL 1.0 are auto-fused
+    model: "prithivMLmods/Retro-Pixel-Flux-LoRA", // LoRA + SDXL 1.0 are auto-fused
     inputs: fullPrompt,
     parameters: {
       // num_inference_steps: 8, // keep latency ≈ 1.8 s
@@ -49,7 +49,8 @@ export async function downscaleImage8x(imageBuffer: Buffer): Promise<Buffer> {
     const processedBuffer = await sharp(imageBuffer)
       .resize(64, 64, {
         kernel: "nearest",
-        fit: "fill",
+        fit: "cover",
+        position: "center",
       })
       // Quantize colors - reduce to a smaller palette without dithering
       .png({

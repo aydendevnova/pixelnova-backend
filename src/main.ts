@@ -866,8 +866,9 @@ app.post(
         throw updateError;
       }
 
+      // We don't need to await the promise. Just hope it happens.
       // save to supabase storage
-      const { data, error } = await supabase.storage
+      const promise = supabase.storage
         .from("pixel-art")
         .upload(`${user.id}/${Date.now()}.png`, processedImage);
 
