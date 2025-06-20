@@ -48,6 +48,7 @@ import { type Database } from "./lib/types_db";
 import { stripe } from "./utils/stripe";
 import { downscaleImage8x, generatePixelSprite } from "./lib/pixel-art-redmond";
 import sharp from "sharp";
+import { getMaxConversions, getMaxGenerations } from "./const/plan-limits";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -471,6 +472,27 @@ app.post("/api/downscale-image", upload.single("image"), async (req, res) => {
     const timestamp = Math.floor(Date.now() / 1000);
     const serverNonce = generateServerNonce();
 
+    // Get user profile to check limits
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", user.id)
+      .single();
+
+    if (profileError || !profile) {
+      throw profileError || new Error("Profile not found");
+    }
+
+    // Check if user has reached their conversion limit
+    const maxConversions = getMaxConversions(profile.tier);
+    if (profile.conversion_count >= maxConversions) {
+      return res.status(403).json({
+        error: "Conversion limit reached",
+        limit: maxConversions,
+        current: profile.conversion_count,
+      });
+    }
+
     // Store nonce in Redis or similar with short TTL
     await nonceCache.cacheNonce(user.id, serverNonce, 30); // 30 second TTL
 
@@ -498,33 +520,26 @@ app.post("/api/downscale-image", upload.single("image"), async (req, res) => {
     // Convert buffer to base64 for JSON response
     const base64Image = processedBuffer.toString("base64");
 
+    // Increment both conversion counters
+    const { error: updateError } = await supabase
+      .from("profiles")
+      .update({
+        conversion_count: (profile.conversion_count ?? 0) + 1,
+        conversion_count_lifetime: (profile.conversion_count_lifetime ?? 0) + 1,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", user.id);
+
+    if (updateError) {
+      throw updateError;
+    }
+
     res.json({
       a: key,
       b: timestamp,
       c: serverNonce,
       image: `data:image/png;base64,${base64Image}`,
     });
-
-    // increment generation count
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("generation_count")
-      .eq("id", user.id)
-      .single();
-    if (profileError) {
-      throw profileError;
-    }
-    if (!profile) {
-      throw new Error("Profile not found");
-    }
-    // increment generation count
-    const { error: updateError } = await supabase
-      .from("profiles")
-      .update({ generation_count: (profile?.generation_count ?? 0) + 1 })
-      .eq("id", user.id);
-    if (updateError) {
-      throw updateError;
-    }
   } catch (err) {
     console.error("Downscale image error:", err);
     res.status(500).json({
@@ -783,49 +798,82 @@ app.post(
   "/api/generate-pixel-art",
   express.json({ type: "application/json" }),
   async (req, res) => {
-    // require auth
-    const { user, supabase } = await withAuth(req);
-    if (!user) {
-      return res.status(401).json({ error: "User not found" });
-    }
-
     try {
-      // console.log("body", req.body);
-      // let prompt = req.body.prompt || "Astronaut riding a horse";
-      // const useOpenAI = req.body.useOpenAI || false;
+      const { user, supabase } = await withAuth(req);
+      if (!user) {
+        return res.status(401).json({ error: "User not found" });
+      }
 
-      // if (useOpenAI) {
-      //   // Make a call to open ai 4o mini to improve prompt
-      //   let improvedPrompt = await openai.chat.completions.create({
-      //     model: "gpt-4o-mini",
-      //     messages: [
-      //       {
-      //         role: "system",
-      //         content:
-      //           "You are a helpful assistant that improves prompts for pixel art generation. You are trying to optimize prompts for artificialguybr/PixelArtRedmond, which is a LoRA (Low-Rank Adaptation) model fine-tuned on top of Stable Diffusion XL 1.0 (SDXL 1.0), for pixel art generation. The LoRA has not generalized well for extremely underspecified prompts — it requires more deliberate conditioning. SDXL 1.0 + PixelArtRedmond LoRA is trained for: Pixel art style Likely character-centric compositions Coloring-book-like line art Limited generalization across diverse scenes.",
-      //       },
-      //       {
-      //         role: "user",
-      //         content: `Improve the following prompt for pixel art generation: ${prompt}`,
-      //       },
-      //     ],
-      //   });
-      //   prompt = improvedPrompt.choices[0].message.content ?? prompt;
-      //   console.log("improvedPrompt", prompt);
-      // }
+      // Get user profile to check limits
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", user.id)
+        .single();
 
-      // const imgBuffer = await generatePixelSprite(prompt);
-      // const processedImage = await downscaleImage8x(imgBuffer);
+      if (profileError || !profile) {
+        throw profileError || new Error("Profile not found");
+      }
 
-      // // save to supabase storage
-      // const { data, error } = await supabase.storage
-      //   .from("pixel-art")
-      //   .upload(`${user.id}/${Date.now()}.png`, processedImage);
+      // Check if user has reached their generation limit
+      const maxGenerations = getMaxGenerations(profile.tier);
+      if (profile.generation_count >= maxGenerations) {
+        return res.status(403).json({
+          error: "Generation limit reached",
+          limit: maxGenerations,
+          current: profile.generation_count,
+        });
+      }
 
-      // // Send the processed image
-      // res.set("Content-Type", "image/png");
-      // res.send(processedImage);
-      res.status(200).json({ message: "Disabled in production" });
+      let prompt = req.body.prompt || "Astronaut riding a horse";
+      const useOpenAI = req.body.useOpenAI || false;
+
+      if (useOpenAI) {
+        // Make a call to open ai to improve prompt
+        let improvedPrompt = await openai.chat.completions.create({
+          model: "gpt-4",
+          messages: [
+            {
+              role: "system",
+              content:
+                "You are a helpful assistant that improves prompts for pixel art generation. You are trying to optimize prompts for artificialguybr/PixelArtRedmond, which is a LoRA (Low-Rank Adaptation) model fine-tuned on top of Stable Diffusion XL 1.0 (SDXL 1.0), for pixel art generation. The LoRA has not generalized well for extremely underspecified prompts — it requires more deliberate conditioning. SDXL 1.0 + PixelArtRedmond LoRA is trained for: Pixel art style Likely character-centric compositions Coloring-book-like line art Limited generalization across diverse scenes.",
+            },
+            {
+              role: "user",
+              content: `Improve the following prompt for pixel art generation: ${prompt}`,
+            },
+          ],
+        });
+        prompt = improvedPrompt.choices[0].message.content ?? prompt;
+        console.log("improvedPrompt", prompt);
+      }
+
+      const imgBuffer = await generatePixelSprite(prompt);
+      const processedImage = await downscaleImage8x(imgBuffer);
+
+      // Increment both generation counters
+      const { error: updateError } = await supabase
+        .from("profiles")
+        .update({
+          generation_count: (profile.generation_count ?? 0) + 1,
+          generation_count_lifetime:
+            (profile.generation_count_lifetime ?? 0) + 1,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", user.id);
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      // save to supabase storage
+      const { data, error } = await supabase.storage
+        .from("pixel-art")
+        .upload(`${user.id}/${Date.now()}.png`, processedImage);
+
+      // Send the processed image
+      res.set("Content-Type", "image/png");
+      res.send(processedImage);
     } catch (error) {
       console.error("Error:", error);
       const errorMessage =

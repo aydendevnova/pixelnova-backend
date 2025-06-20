@@ -33,11 +33,6 @@ export async function generatePixelSprite(
   const arrayBuffer = await response.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
 
-  // Ensure the public directory exists
-  const outputPath = "./public/sprite.png";
-  await mkdir(dirname(outputPath), { recursive: true });
-
-  await writeFile(outputPath, buffer);
   return buffer;
 }
 
