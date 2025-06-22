@@ -624,6 +624,49 @@ async function processStripeEvent(
   supabase: SupabaseClient<Database>
 ) {
   switch (event.type) {
+    case "invoice.paid": {
+      const invoice = event.data.object;
+
+      // Only process if this is a subscription invoice
+      if (invoice.subscription) {
+        // Get the customer ID
+        const { data: customer, error: customerError } = await supabase
+          .from("stripe_customers")
+          .select("user_id")
+          .eq("subscription_id", invoice.subscription)
+          .single();
+
+        if (customerError || !customer) {
+          console.error("Error finding customer:", customerError);
+          throw new Error("Customer not found");
+        }
+
+        // Reset generation and conversion counts, but keep lifetime counts
+        const { error: updateError } = await supabase
+          .from("profiles")
+          .update({
+            generation_count: 0,
+            conversion_count: 0,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", customer.user_id);
+
+        if (updateError) {
+          console.error("Error resetting counts:", updateError);
+          throw updateError;
+        }
+
+        try {
+          await supabase.from("logs").insert({
+            type: "subscription_renewed",
+            message: `User ${customer.user_id} subscription renewed, reset generation and conversion counts.`,
+          });
+        } catch (error) {
+          console.error("Error logging subscription renewal:", error);
+        }
+      }
+      break;
+    }
     case "checkout.session.completed": {
       const session = event.data.object;
       console.log("session");
