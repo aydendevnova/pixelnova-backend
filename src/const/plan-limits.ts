@@ -8,7 +8,7 @@ export const PLAN_LIMITS = {
     MAX_CONVERSIONS: 10,
   },
   PRO: {
-    MAX_GENERATIONS: 150,
+    MAX_GENERATIONS: 220,
     MAX_CONVERSIONS: Infinity, // Unlimited conversions for PRO
   },
 } as const;
