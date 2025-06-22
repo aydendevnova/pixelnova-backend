@@ -1,4 +1,10 @@
 import dotenv from "dotenv";
+import express from "express";
+import cors from "cors";
+import multer from "multer";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import path from "path";
+import { promises as fs } from "fs";
 
 dotenv.config();
 
@@ -30,11 +36,6 @@ if (!process.env.STRIPE_PRICE_ID_PRO) {
   throw new Error("STRIPE_PRICE_ID_PRO is not set");
 }
 
-import express from "express";
-import cors from "cors";
-import multer from "multer";
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
-
 import { BLACKLISTED_USERNAMES } from "./const/blacklisted-usernames";
 import { BLACKLISTED_SITES } from "./const/blacklisted-sites";
 import { checkUsernameSchema, updateAccountSchema } from "./types/types";
@@ -46,7 +47,10 @@ import { nonceCache } from "./utils/nonce-cache";
 import { type Database } from "./lib/types_db";
 
 import { stripe } from "./utils/stripe";
-import { downscaleImage8x, generatePixelSprite } from "./lib/pixel-art-redmond";
+import {
+  downscaleImage8x as downscaleImage,
+  generatePixelSprite,
+} from "./lib/pixel-art-tools";
 import sharp from "sharp";
 import { getMaxConversions, getMaxGenerations } from "./const/plan-limits";
 
@@ -567,41 +571,6 @@ app.post("/api/downscale-image", upload.single("image"), async (req, res) => {
 //   return { user, supabase, credits: profile.generation_count };
 // };
 
-async function spendCredits(
-  userId: string,
-  supabase: SupabaseClient,
-  amount: number,
-  existingCredits?: number | null | undefined
-) {
-  let baseCredits = existingCredits ?? 0;
-  if (!baseCredits) {
-    // fetch profile
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("credits")
-      .eq("id", userId)
-      .single();
-    if (profileError) {
-      console.error("Error fetching user profile:", profileError);
-      throw new Error(`Failed to fetch user profile: ${profileError.message}`);
-    }
-    baseCredits = profile?.credits ?? 0;
-  }
-  // Deduct credits
-  const { error: deductError } = await supabase
-    .from("profiles")
-    .update({
-      credits: baseCredits - amount,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", userId);
-
-  if (deductError) {
-    console.error("Error deducting credits:", deductError);
-    throw deductError;
-  }
-}
-
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
@@ -868,31 +837,54 @@ app.post(
         });
       }
 
-      let prompt = req.body.prompt || "Astronaut riding a horse";
-      const useOpenAI = req.body.useOpenAI || false;
-
-      if (useOpenAI) {
-        // Make a call to open ai to improve prompt
-        let improvedPrompt = await openai.chat.completions.create({
-          model: "gpt-4",
-          messages: [
-            {
-              role: "system",
-              content:
-                "You are a helpful assistant that improves prompts for pixel art generation. You are trying to optimize prompts for artificialguybr/PixelArtRedmond, which is a LoRA (Low-Rank Adaptation) model fine-tuned on top of Stable Diffusion XL 1.0 (SDXL 1.0), for pixel art generation. The LoRA has not generalized well for extremely underspecified prompts — it requires more deliberate conditioning. SDXL 1.0 + PixelArtRedmond LoRA is trained for: Pixel art style Likely character-centric compositions Coloring-book-like line art Limited generalization across diverse scenes.",
-            },
-            {
-              role: "user",
-              content: `Improve the following prompt for pixel art generation: ${prompt}`,
-            },
-          ],
-        });
-        prompt = improvedPrompt.choices[0].message.content ?? prompt;
-        console.log("improvedPrompt", prompt);
+      let resolution = 128;
+      try {
+        const t_res = parseInt(req.body.resolution);
+        if ([64, 96, 128].includes(t_res)) {
+          resolution = t_res;
+        }
+      } catch (e) {
+        console.error("Error parsing resolution:", e);
       }
 
+      let prompt = req.body.prompt || "Astronaut riding a horse";
+      prompt += ` ${resolution}x${resolution} ${resolution} x ${resolution}`;
+      // const useOpenAI = req.body.useOpenAI || false;
+
+      // if (useOpenAI) {
+      //   // Make a call to open ai to improve prompt
+      //   let improvedPrompt = await openai.chat.completions.create({
+      //     model: "gpt-4",
+      //     messages: [
+      //       {
+      //         role: "system",
+      //         content:
+      //           "You are a helpful assistant that improves prompts for pixel art generation. You are trying to optimize prompts for artificialguybr/PixelArtRedmond, which is a LoRA (Low-Rank Adaptation) model fine-tuned on top of Stable Diffusion XL 1.0 (SDXL 1.0), for pixel art generation. The LoRA has not generalized well for extremely underspecified prompts — it requires more deliberate conditioning. SDXL 1.0 + PixelArtRedmond LoRA is trained for: Pixel art style Likely character-centric compositions Coloring-book-like line art Limited generalization across diverse scenes.",
+      //       },
+      //       {
+      //         role: "user",
+      //         content: `Improve the following prompt for pixel art generation: ${prompt}`,
+      //       },
+      //     ],
+      //   });
+      //   prompt = improvedPrompt.choices[0].message.content ?? prompt;
+      //   console.log("improvedPrompt", prompt);
+      // }
+
+      // log time elapsed
       const imgBuffer = await generatePixelSprite(prompt);
-      const processedImage = await downscaleImage8x(imgBuffer);
+      // save this image to disk with absolute path
+      // const startTime = Date.now();
+      // const outputPath = path.join(__dirname, "generated-images");
+      // await fs.mkdir(outputPath, { recursive: true }); // Create directory if it doesn't exist
+      // const timestamp = Date.now();
+      // const imagePath = path.join(outputPath, `test-${timestamp}.png`);
+      // await fs.writeFile(imagePath, imgBuffer);
+      // console.log(`Image saved to: ${imagePath}`);
+      const processedImage = await downscaleImage(imgBuffer, resolution);
+
+      // const endTime = Date.now();
+      // console.log(`Time elapsed: ${endTime - startTime}ms`);
 
       // Increment both generation counters
       const { error: updateError } = await supabase
@@ -963,3 +955,41 @@ app.post(
     }
   }
 );
+
+// async function processTestImage(gamePath: string): Promise<Buffer> {
+//   try {
+//     const startTime = Date.now();
+//     // Read the input image
+//     // use fs to read the image
+//     const inputImage = await fs.readFile(
+//       path.join(__dirname, "generated-images", gamePath)
+//     );
+//     // const inputImage = await sharp(gamePath);
+//     const metadata = await sharp(inputImage).metadata();
+
+//     if (!metadata.width || !metadata.height) {
+//       throw new Error("Could not get image dimensions");
+//     }
+
+//     const downscaledImage = await downscaleImage(inputImage, 128);
+
+//     // Save to disk with game path-based filename
+//     const outputPath = path.join(
+//       __dirname,
+//       "generated-images",
+//       `${gamePath}-downscaled.png`
+//     );
+//     await sharp(downscaledImage).toFile(outputPath);
+
+//     const endTime = Date.now();
+//     console.log(`Time elapsed: ${endTime - startTime}ms`);
+//     console.log("downscaledImage", outputPath);
+
+//     return downscaledImage;
+//   } catch (error) {
+//     console.error("Error processing test image:", error);
+//     throw error;
+//   }
+// }
+
+// processTestImage("/test-1750625857434.png");
