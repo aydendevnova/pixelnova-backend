@@ -3,18 +3,15 @@ import express from "express";
 import cors from "cors";
 import multer from "multer";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
-import path from "path";
-import { promises as fs } from "fs";
-
 dotenv.config();
 
 if (!process.env.HF_TOKEN) {
   throw new Error("HF_TOKEN is not set");
 }
 
-if (!process.env.OPEN_API_KEY) {
-  throw new Error("OPEN_API_KEY is not set");
-}
+// if (!process.env.OPEN_API_KEY) {
+//   throw new Error("OPEN_API_KEY is not set");
+// }
 
 if (!process.env.SUPABASE_URL) {
   throw new Error("SUPABASE_URL is not set");
@@ -36,21 +33,15 @@ if (!process.env.STRIPE_PRICE_ID_PRO) {
   throw new Error("STRIPE_PRICE_ID_PRO is not set");
 }
 
-import { BLACKLISTED_USERNAMES } from "./const/blacklisted-usernames";
+import { BLACKLISTED_WORDS } from "./const/blacklisted-words";
 import { BLACKLISTED_SITES } from "./const/blacklisted-sites";
 import { checkUsernameSchema, updateAccountSchema } from "./types/types";
 
-import OpenAI from "openai";
 import rateLimit from "express-rate-limit";
-import crypto from "crypto";
-import { nonceCache } from "./utils/nonce-cache";
 import { type Database } from "./lib/types_db";
 
 import { stripe } from "./utils/stripe";
-import {
-  downscaleImage8x as downscaleImage,
-  generatePixelSprite,
-} from "./lib/pixel-art-tools";
+import { downscaleImage, generatePixelSprite } from "./lib/pixel-art-tools";
 import sharp from "sharp";
 import { getMaxConversions, getMaxGenerations } from "./const/plan-limits";
 
@@ -75,13 +66,9 @@ const upload = multer({
 const {
   SUPABASE_URL,
   SUPABASE_SERVICE_ROLE_KEY,
-  OPEN_API_KEY,
+  // OPEN_API_KEY,
   PORT = 8787,
 } = process.env;
-
-const openai = new OpenAI({
-  apiKey: OPEN_API_KEY,
-});
 
 // CORS configuration
 app.use(
@@ -90,6 +77,7 @@ app.use(
       "http://localhost:3000",
       "http://192.168.12.102:3000",
       "https://editor.pixelnova.app", // Cloudflare Pages domain
+      "https://pixelnova.app",
     ],
     methods: ["GET", "POST", "PUT", "OPTIONS", "PATCH", "DELETE"],
     allowedHeaders: [
@@ -103,7 +91,10 @@ app.use(
 
 // Always allow webhook requests to bypass rate limiting
 app.use((req, res, next) => {
-  if (req.path === "/api/webhook") {
+  if (
+    req.path === "/api/webhook" ||
+    req.path === "/api/update-conversion-count"
+  ) {
     return next();
   }
   return apiLimiter(req, res, next);
@@ -187,21 +178,6 @@ app.post(
   }
 );
 
-function generateImageKey(
-  userId: string,
-  timestamp: number,
-  serverNonce: string
-): string {
-  // Super simple key generation for testing
-  const data = `${userId}:${timestamp}:${serverNonce}`;
-  let hash = 0;
-  for (let i = 0; i < data.length; i++) {
-    hash = (hash << 5) - hash + data.charCodeAt(i);
-    hash = hash & hash; // Convert to 32-bit integer
-  }
-  return Math.abs(hash).toString(16).padStart(8, "0");
-}
-
 // Helper function to handle protected routes
 const withAuth = async (req: express.Request) => {
   const authHeader = req.headers.authorization;
@@ -247,9 +223,6 @@ app.get("/api/health", (_, res) => {
   res.json({ status: "ok" });
 });
 
-const PIXEL_ART_INJECTION =
-  "You are a pixel art sprite creator. You make an image with a white background. Pixels are sharp and square. Make ";
-
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 200, // Limit each IP to 200 requests per windowMs
@@ -264,7 +237,7 @@ app.use(apiLimiter);
 // Stricter limit for image generation
 const aiLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 70, // Limit each IP to 70 requests per hour
+  max: 250, // Limit each IP to 70 requests per hour
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -308,7 +281,7 @@ app.patch(
         // Check blacklisted usernames and sites
         if (
           usernameSanitized &&
-          (BLACKLISTED_USERNAMES.includes(usernameSanitized) ||
+          (BLACKLISTED_WORDS.includes(usernameSanitized) ||
             BLACKLISTED_SITES.some((site) => usernameSanitized.includes(site)))
         ) {
           return res.status(400).json({ error: "Username is blacklisted" });
@@ -381,7 +354,7 @@ app.post(
 
         // Check if username is blacklisted
         if (
-          BLACKLISTED_USERNAMES.includes(sanitizedUsername) ||
+          BLACKLISTED_WORDS.includes(sanitizedUsername) ||
           BLACKLISTED_SITES.some((site) => sanitizedUsername.includes(site))
         ) {
           return res.status(400).json({ available: false, blacklisted: true });
@@ -431,50 +404,28 @@ app.post(
   }
 );
 
-// Generate a secure nonce for each request
-function generateServerNonce(): string {
-  return crypto.randomBytes(32).toString("hex");
-}
-
-// Replace the existing /api/estimate-grid-size endpoint
-app.post(
-  "/api/estimate-grid-size",
-  express.json({ type: "application/json" }),
-  async (req, res) => {
-    try {
-      const { user } = await withAuth(req);
-      const timestamp = Math.floor(Date.now() / 1000);
-      const serverNonce = generateServerNonce();
-
-      await nonceCache.cacheNonce(user.id, serverNonce, 30); // 30 second TTL
-
-      const key = generateImageKey(user.id, timestamp, serverNonce);
-
-      res.status(200).json({
-        a: key,
-        b: timestamp,
-        c: serverNonce,
-        authorized: true,
-      });
-    } catch (err) {
-      console.error("Estimate grid size error:", err);
-      res.status(500).json({
-        error: "Failed to estimate grid size",
-        message: err instanceof Error ? err.message : "Unknown error",
-      });
-    }
-  }
-);
-
-app.post("/api/downscale-image", upload.single("image"), async (req, res) => {
+app.post("/api/reduce-colors", upload.single("image"), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: "No image file provided" });
     }
 
     const { user, supabase } = await withAuth(req);
-    const timestamp = Math.floor(Date.now() / 1000);
-    const serverNonce = generateServerNonce();
+
+    // Get factor from request body (sent via FormData)
+    let factor = 96; // default value
+
+    try {
+      if (req.body.factor) {
+        const parsed = parseInt(req.body.factor);
+        if (!isNaN(parsed) && parsed > 0 && parsed <= 256) {
+          factor = parsed;
+        }
+      }
+    } catch (err) {
+      console.error("Invalid factor:", err);
+      // Use default value if parsing fails
+    }
 
     // Get user profile to check limits
     const { data: profile, error: profileError } = await supabase
@@ -497,32 +448,59 @@ app.post("/api/downscale-image", upload.single("image"), async (req, res) => {
       });
     }
 
-    // Store nonce in Redis or similar with short TTL
-    await nonceCache.cacheNonce(user.id, serverNonce, 30); // 30 second TTL
-
-    const key = generateImageKey(user.id, timestamp, serverNonce);
-
-    // Process the image using sharp
+    // Only do color reduction, no resizing since client handles that
     const processedBuffer = await sharp(req.file.buffer)
-      .resize(512, 512, {
-        fit: "inside",
-        withoutEnlargement: true,
-      })
       .png({
-        colors: 40, // Reduce to 40 colors
+        colors: factor, // Reduce colors
         dither: 0, // No dithering to maintain crisp edges
+        compressionLevel: 0,
         palette: true, // Use palette-based quantization
-      })
-      .modulate({
-        brightness: 1,
-        saturation: 1.1,
-        hue: 0,
-        lightness: 1,
+        effort: 2,
       })
       .toBuffer();
 
     // Convert buffer to base64 for JSON response
     const base64Image = processedBuffer.toString("base64");
+
+    res.json({
+      image: `data:image/png;base64,${base64Image}`,
+      maxConversions,
+      currentCount: profile.conversion_count,
+    });
+  } catch (err) {
+    console.error("Color reduction error:", err);
+    res.status(500).json({
+      error: "Failed to reduce colors",
+      message: err instanceof Error ? err.message : "Unknown error",
+    });
+  }
+});
+
+// New endpoint to update conversion count
+app.post("/api/update-conversion-count", async (req, res) => {
+  try {
+    const { user, supabase } = await withAuth(req);
+
+    // Get user profile
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", user.id)
+      .single();
+
+    if (profileError || !profile) {
+      throw profileError || new Error("Profile not found");
+    }
+
+    // Check if user has reached their conversion limit
+    const maxConversions = getMaxConversions(profile.tier);
+    if (profile.conversion_count >= maxConversions) {
+      return res.status(403).json({
+        error: "Conversion limit reached",
+        limit: maxConversions,
+        current: profile.conversion_count,
+      });
+    }
 
     // Increment both conversion counters
     const { error: updateError } = await supabase
@@ -539,15 +517,14 @@ app.post("/api/downscale-image", upload.single("image"), async (req, res) => {
     }
 
     res.json({
-      a: key,
-      b: timestamp,
-      c: serverNonce,
-      image: `data:image/png;base64,${base64Image}`,
+      success: true,
+      newCount: (profile.conversion_count ?? 0) + 1,
+      maxConversions,
     });
   } catch (err) {
-    console.error("Downscale image error:", err);
+    console.error("Update conversion count error:", err);
     res.status(500).json({
-      error: "Failed to downscale image",
+      error: "Failed to update conversion count",
       message: err instanceof Error ? err.message : "Unknown error",
     });
   }
@@ -570,10 +547,6 @@ app.post("/api/downscale-image", upload.single("image"), async (req, res) => {
 
 //   return { user, supabase, credits: profile.generation_count };
 // };
-
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
 
 app.get("/api/protected", async (req, res) => {
   try {
@@ -809,6 +782,7 @@ app.post(
 app.post(
   "/api/generate-pixel-art",
   express.json({ type: "application/json" }),
+  aiLimiter,
   async (req, res) => {
     try {
       const { user, supabase } = await withAuth(req);
@@ -849,67 +823,49 @@ app.post(
 
       let prompt = req.body.prompt || "Astronaut riding a horse";
       prompt += ` ${resolution}x${resolution} ${resolution} x ${resolution}`;
-      // const useOpenAI = req.body.useOpenAI || false;
-
-      // if (useOpenAI) {
-      //   // Make a call to open ai to improve prompt
-      //   let improvedPrompt = await openai.chat.completions.create({
-      //     model: "gpt-4",
-      //     messages: [
-      //       {
-      //         role: "system",
-      //         content:
-      //           "You are a helpful assistant that improves prompts for pixel art generation. You are trying to optimize prompts for artificialguybr/PixelArtRedmond, which is a LoRA (Low-Rank Adaptation) model fine-tuned on top of Stable Diffusion XL 1.0 (SDXL 1.0), for pixel art generation. The LoRA has not generalized well for extremely underspecified prompts — it requires more deliberate conditioning. SDXL 1.0 + PixelArtRedmond LoRA is trained for: Pixel art style Likely character-centric compositions Coloring-book-like line art Limited generalization across diverse scenes.",
-      //       },
-      //       {
-      //         role: "user",
-      //         content: `Improve the following prompt for pixel art generation: ${prompt}`,
-      //       },
-      //     ],
-      //   });
-      //   prompt = improvedPrompt.choices[0].message.content ?? prompt;
-      //   console.log("improvedPrompt", prompt);
-      // }
-
-      // log time elapsed
-      const imgBuffer = await generatePixelSprite(prompt);
-      // save this image to disk with absolute path
-      // const startTime = Date.now();
-      // const outputPath = path.join(__dirname, "generated-images");
-      // await fs.mkdir(outputPath, { recursive: true }); // Create directory if it doesn't exist
-      // const timestamp = Date.now();
-      // const imagePath = path.join(outputPath, `test-${timestamp}.png`);
-      // await fs.writeFile(imagePath, imgBuffer);
-      // console.log(`Image saved to: ${imagePath}`);
-      const processedImage = await downscaleImage(imgBuffer, resolution);
-
-      // const endTime = Date.now();
-      // console.log(`Time elapsed: ${endTime - startTime}ms`);
-
-      // Increment both generation counters
-      const { error: updateError } = await supabase
-        .from("profiles")
-        .update({
-          generation_count: (profile.generation_count ?? 0) + 1,
-          generation_count_lifetime:
-            (profile.generation_count_lifetime ?? 0) + 1,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", user.id);
-
-      if (updateError) {
-        throw updateError;
+      if (resolution === 64) {
+        prompt += " low resolution ";
+      }
+      if (
+        BLACKLISTED_WORDS.some((word) =>
+          prompt.toLowerCase().split(/\s+/).includes(word.toLowerCase())
+        )
+      ) {
+        return res.status(400).json({
+          error: "Prompt contains blacklisted words potentially against TOS.",
+        });
       }
 
-      // We don't need to await the promise. Just hope it happens.
-      // save to supabase storage
+      // Generate the image
+      const imgBuffer = await generatePixelSprite(prompt);
+
+      // Process the image - only color reduction, no downscaling
+      const processedImage = await sharp(imgBuffer)
+        .png({
+          colors: 16,
+          dither: 0,
+          compressionLevel: 0,
+          palette: true,
+        })
+        .toBuffer();
+
+      // downscale
+      const downscaledImage = await downscaleImage(processedImage, resolution);
+
+      // Save to supabase storage without awaiting
       const promise = supabase.storage
         .from("pixel-art")
-        .upload(`${user.id}/${Date.now()}.png`, processedImage);
+        .upload(`${user.id}/${Date.now()}.png`, downscaledImage);
+
+      // increment generations
+      await supabase
+        .from("profiles")
+        .update({ generation_count: profile.generation_count + 1 })
+        .eq("id", user.id);
 
       // Send the processed image
       res.set("Content-Type", "image/png");
-      res.send(processedImage);
+      res.send(downscaledImage);
     } catch (error) {
       console.error("Error:", error);
       const errorMessage =
@@ -993,3 +949,7 @@ app.post(
 // }
 
 // processTestImage("/test-1750625857434.png");
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});

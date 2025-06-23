@@ -169,7 +169,7 @@ async function customDownscale(
 }
 
 // Function to downscale image
-export async function downscaleImage8x(
+export async function downscaleImage(
   imageBuffer: Buffer,
   resolution: number
 ): Promise<Buffer> {

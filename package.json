@@ -6,9 +6,7 @@
   "scripts": {
     "kill-port": "node scripts/kill-port.js",
     "dev": "node scripts/kill-port.js && ts-node-dev --respawn --transpile-only --exit-child src/main.ts",
-    "dev:build-wasm": "./wasm/build-wasm.sh && ts-node-dev --respawn --transpile-only --exit-child src/main.ts",
     "build": "tsc",
-    "build:wasm": "./wasm/build-wasm.sh",
     "start": "node dist/main.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
