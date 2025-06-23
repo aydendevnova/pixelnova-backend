@@ -307,6 +307,49 @@ app.patch(
           return res.status(400).json({ error: "Website is blacklisted" });
         }
 
+        let avatar_url = profile.avatar_url;
+
+        // Handle image upload if present
+        if (req.file) {
+          try {
+            // Process the image - resize and optimize
+            const processedImage = await sharp(req.file.buffer)
+              .resize(256, 256, {
+                fit: "cover",
+                position: "center",
+              })
+              .webp({ quality: 80 })
+              .toBuffer();
+
+            // Upload to Supabase storage
+            const fileName = `${user.id}/${Date.now()}.webp`;
+            const { data: uploadData, error: uploadError } =
+              await supabase.storage
+                .from("avatars")
+                .upload(fileName, processedImage, {
+                  contentType: "image/webp",
+                  upsert: true,
+                });
+
+            if (uploadError) {
+              throw uploadError;
+            }
+
+            // Get the public URL
+            const {
+              data: { publicUrl },
+            } = supabase.storage.from("avatars").getPublicUrl(fileName);
+
+            avatar_url = publicUrl;
+          } catch (error) {
+            console.error("Image processing error:", error);
+            return res.status(500).json({
+              error: "Failed to process image",
+              message: error instanceof Error ? error.message : "Unknown error",
+            });
+          }
+        }
+
         // Update profile
         const { error: updateError } = await supabase
           .from("profiles")
@@ -314,6 +357,7 @@ app.patch(
             full_name: fullName?.trim() ?? profile.full_name,
             username: usernameSanitized ?? profile.username,
             website: websiteSanitized ?? profile.website,
+            avatar_url,
             updated_at: new Date().toISOString(),
           })
           .eq("id", user.id);
@@ -322,7 +366,7 @@ app.patch(
           throw updateError;
         }
 
-        return res.status(200).json({ success: true });
+        return res.status(200).json({ success: true, avatar_url });
       } catch (err) {
         console.error("Update account error:", err);
         res.status(500).json({
