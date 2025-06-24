@@ -1124,6 +1124,7 @@ app.post(
         mode: "subscription",
         success_url: `${req.headers.origin}/success`,
         cancel_url: `${req.headers.origin}/cancel`,
+        allow_promotion_codes: true,
       });
 
       // Log successful checkout session creation
