@@ -762,17 +762,19 @@ async function processStripeEvent(
   supabase: SupabaseClient<Database>
 ) {
   switch (event.type) {
-    case "invoice.paid": {
+    // Resets a user's generation and conversion counts, even upon first subscription.
+    case "invoice.payment_succeeded": {
       const invoice = event.data.object;
+      if (
+        invoice.billing_reason === "subscription_create" ||
+        invoice.billing_reason === "subscription_cycle"
+      ) {
+        log(
+          "info",
+          LogType.SUBSCRIPTION_RENEWED,
+          `An invoice payment succeeded: ${JSON.stringify(invoice, null, 2)}`
+        );
 
-      log(
-        "info",
-        LogType.SUBSCRIPTION_RENEWED,
-        `An invoice was paid: ${JSON.stringify(invoice, null, 2)}`
-      );
-
-      // Only process if this is a subscription invoice
-      if (invoice.subscription) {
         // Get the customer ID
         const { data: customer, error: customerError } = await supabase
           .from("stripe_customers")
@@ -835,7 +837,18 @@ async function processStripeEvent(
             }
           );
         }
+      } else {
+        log(
+          "error",
+          LogType.SUBSCRIPTION_ERROR,
+          "I don't know what to do? Invoice is not of subscription_create or subscription_cycle",
+          {
+            error: invoice.billing_reason,
+            userId: invoice.customer,
+          }
+        );
       }
+
       break;
     }
     case "checkout.session.completed": {
