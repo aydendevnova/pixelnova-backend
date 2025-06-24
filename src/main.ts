@@ -41,12 +41,12 @@ import { BLACKLISTED_SITES } from "./const/blacklisted-sites";
 import { checkUsernameSchema, updateAccountSchema } from "./types/types";
 
 import rateLimit from "express-rate-limit";
-import { type Database } from "./lib/types_db";
 
 import { stripe } from "./utils/stripe";
 import { downscaleImage, generatePixelSprite } from "./lib/pixel-art-tools";
 import sharp from "sharp";
 import { getMaxConversions, getMaxGenerations } from "./const/plan-limits";
+import { Database } from "./lib/types_db";
 
 const supabaseAdmin = createClient<Database>(
   process.env.SUPABASE_URL!,
@@ -343,7 +343,8 @@ app.patch(
             website: website || undefined,
             hasNewAvatar: !!req.file,
           })}`,
-          { userId: user.id }
+          {},
+          user.id
         );
 
         const result = updateAccountSchema.safeParse({
@@ -382,7 +383,8 @@ app.patch(
             "warn",
             LogType.ACCOUNT_UPDATE_ERROR,
             `Attempted to update to blacklisted username: ${usernameSanitized}`,
-            { userId: user.id }
+            {},
+            user.id
           );
           return res.status(400).json({ error: "Username is blacklisted" });
         }
@@ -408,7 +410,8 @@ app.patch(
             "warn",
             LogType.ACCOUNT_UPDATE_ERROR,
             `Attempted to update to blacklisted site: ${websiteSanitized}`,
-            { userId: user.id }
+            {},
+            user.id
           );
           return res.status(400).json({ error: "Website is blacklisted" });
         }
@@ -481,7 +484,8 @@ app.patch(
             "info",
             LogType.AVATAR_UPLOAD_SUCCESS,
             `Successfully uploaded new avatar: ${avatar_url}`,
-            { userId: user.id, avatarUrl: avatar_url }
+            { avatarUrl: avatar_url },
+            user.id
           );
         }
 
@@ -497,7 +501,8 @@ app.patch(
           "error",
           LogType.ACCOUNT_UPDATE_ERROR,
           `Error updating account: ${JSON.stringify(err)}`,
-          { userId: user.id }
+          {},
+          user.id
         );
 
         console.error("Update account error:", err);
@@ -599,10 +604,15 @@ app.post("/api/reduce-colors", upload.single("image"), async (req, res) => {
     user = auth.user;
     supabase = auth.supabase;
 
-    await log("info", LogType.PIXEL_ART_GENERATION, "Color reduction request", {
-      userId: user.id,
-      fileSize: req.file.size,
-    });
+    await log(
+      "info",
+      LogType.PIXEL_ART_GENERATION,
+      "Color reduction request",
+      {
+        fileSize: req.file.size,
+      },
+      user.id
+    );
 
     // Get factor from request body
     let factor = 96; // default value
@@ -618,7 +628,10 @@ app.post("/api/reduce-colors", upload.single("image"), async (req, res) => {
         "warn",
         LogType.SYSTEM_ERROR,
         `Invalid factor provided: ${req.body.factor} for user ${user.id}`,
-        { userId: user.id }
+        {
+          factor: req.body.factor,
+        },
+        user.id
       );
       // Continue with default value
     }
@@ -642,10 +655,10 @@ app.post("/api/reduce-colors", upload.single("image"), async (req, res) => {
         LogType.GENERATION_LIMIT_REACHED,
         `Conversion limit reached for user ${user.id}. Current count: ${profile.conversion_count}. Max count: ${maxConversions}`,
         {
-          userId: user.id,
           limit: maxConversions,
           current: profile.conversion_count,
-        }
+        },
+        user.id
       );
 
       throw new ForbiddenError("Conversion limit reached", {
@@ -685,7 +698,8 @@ app.post("/api/reduce-colors", upload.single("image"), async (req, res) => {
           ? err.message
           : "Unknown error: " + JSON.stringify(err)
       } for user ${user?.id}`,
-      { userId: user?.id }
+      {},
+      user?.id
     );
 
     throw new APIError(500, "Failed to process image");
@@ -783,6 +797,114 @@ app.get("/api/protected", async (req, res) => {
   }
 });
 
+// New endpoint to fetch logs (admin only)
+app.get("/api/admin/logs", async (req, res) => {
+  try {
+    const { user, supabase } = await withAuth(req);
+
+    // Check if user is admin
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", user.id)
+      .single();
+
+    if (profileError || !profile?.is_admin) {
+      throw new ForbiddenError("Admin access required");
+    }
+
+    // Get query parameters for pagination and filtering
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 100;
+    const offset = (page - 1) * limit;
+    const userId = req.query.userId as string;
+    const level = req.query.level as string;
+    const sortBy = (req.query.sortBy as string) || "created_at";
+    const sortOrder = (req.query.sortOrder as "asc" | "desc") || "desc";
+
+    // Build the query
+    let query = supabase.from("logs").select("*", { count: "exact" });
+
+    // Apply filters
+    if (userId) {
+      query = query.eq("user_id", userId);
+    }
+    if (level) {
+      query = query.eq("level", level);
+    }
+
+    // Apply sorting
+    query = query.order(sortBy, { ascending: sortOrder === "asc" });
+
+    // Apply pagination
+    query = query.range(offset, offset + limit - 1);
+
+    // Execute query
+    const { data: logs, error: logsError, count } = await query;
+
+    if (logsError) {
+      throw logsError;
+    }
+
+    // If userId is provided, fetch user profile
+    let userProfile = null;
+    if (userId) {
+      const { data: profileData } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", userId)
+        .single();
+      userProfile = profileData;
+    }
+
+    // Get unique user IDs from logs
+    const userIds = [
+      ...new Set(logs?.map((log) => log.user_id).filter(Boolean)),
+    ];
+
+    // Fetch all relevant user profiles in one query
+    const { data: userProfiles } = await supabase
+      .from("profiles")
+      .select("*")
+      .in("id", userIds);
+
+    // Create a map of user profiles
+    const userProfilesMap = (userProfiles || []).reduce((acc, profile) => {
+      acc[profile.id] = profile;
+      return acc;
+    }, {} as Record<string, any>);
+
+    res.json({
+      logs,
+      userProfiles: userProfilesMap,
+      selectedUserProfile: userProfile,
+      pagination: {
+        page,
+        limit,
+        total: count || 0,
+        totalPages: Math.ceil((count || 0) / limit),
+      },
+    });
+  } catch (err) {
+    if (err instanceof ForbiddenError) {
+      res.status(403).json({
+        error: "Forbidden",
+        message: err.message,
+      });
+      return;
+    }
+
+    console.error("Admin logs fetch error:", err);
+    res.status(500).json({
+      error: "Internal server error",
+      message:
+        err instanceof Error
+          ? err.message
+          : "Unknown error: " + JSON.stringify(err),
+    });
+  }
+});
+
 async function processStripeEvent(
   event: any,
   supabase: SupabaseClient<Database>
@@ -834,14 +956,22 @@ async function processStripeEvent(
           .eq("id", customer.user_id);
 
         if (updateError) {
-          log("error", LogType.SUBSCRIPTION_ERROR, "Error resetting counts:", {
-            error: updateError,
-            userId: customer.user_id,
-          });
           log(
             "error",
             LogType.SUBSCRIPTION_ERROR,
-            `Error resetting counts: ${updateError} for user ${customer.user_id}`
+            "Error resetting counts:",
+            {
+              error: updateError,
+              userId: customer.user_id,
+            },
+            customer.user_id
+          );
+          log(
+            "error",
+            LogType.SUBSCRIPTION_ERROR,
+            `Error resetting counts: ${updateError} for user ${customer.user_id}`,
+            {},
+            customer.user_id
           );
           throw updateError;
         }
@@ -850,7 +980,9 @@ async function processStripeEvent(
           log(
             "info",
             LogType.SUBSCRIPTION_RENEWED,
-            `User ${customer.user_id} subscription renewed, reset generation and conversion counts.`
+            `User ${customer.user_id} subscription renewed, reset generation and conversion counts.`,
+            {},
+            customer.user_id
           );
         } catch (error) {
           log(
@@ -863,7 +995,8 @@ async function processStripeEvent(
                   ? error.message
                   : "Unknown error: " + JSON.stringify(error),
               userId: customer.user_id,
-            }
+            },
+            customer.user_id
           );
         }
       } else {
@@ -873,7 +1006,7 @@ async function processStripeEvent(
           "I don't know what to do? Invoice is not of subscription_create or subscription_cycle",
           {
             error: invoice.billing_reason,
-            userId: invoice.customer,
+            userId: JSON.stringify(invoice.customer),
           }
         );
       }
@@ -899,15 +1032,11 @@ async function processStripeEvent(
         log(
           "error",
           LogType.CHECKOUT_ERROR,
-          "Checkout completed: Missing price id",
-          { userId }
-        );
-        log(
-          "error",
-          LogType.CHECKOUT_ERROR,
           `Checkout completed: Missing price id: ${JSON.stringify(
             session.metadata
-          )} for user ${userId}`
+          )} for user ${userId}`,
+          { metadata: JSON.stringify(session.metadata) },
+          userId
         );
         throw new Error("Missing price id");
       }
@@ -921,12 +1050,15 @@ async function processStripeEvent(
           "error",
           LogType.CHECKOUT_ERROR,
           "Checkout completed: Invalid price id",
-          { userId }
+          { userId },
+          userId
         );
         log(
           "error",
           LogType.CHECKOUT_ERROR,
-          `Invalid price id: ${JSON.stringify(session.metadata)}`
+          `Invalid price id: ${JSON.stringify(session.metadata)}`,
+          { metadata: JSON.stringify(session.metadata) },
+          userId
         );
         throw new Error("Invalid price id");
       }
@@ -951,7 +1083,8 @@ async function processStripeEvent(
                 ? updateError.message
                 : "Unknown error: " + JSON.stringify(updateError),
             userId,
-          }
+          },
+          userId
         );
         log(
           "info",
@@ -964,7 +1097,9 @@ async function processStripeEvent(
           log(
             "info",
             LogType.TIER_UPDATED,
-            `User ${userId} updated tier to ${tier}.`
+            `User ${userId} updated tier to ${tier}.`,
+            { userId, tier },
+            userId
           );
         } catch (error) {
           log(
@@ -977,7 +1112,8 @@ async function processStripeEvent(
                   ? error.message
                   : "Unknown error: " + JSON.stringify(error),
               userId,
-            }
+            },
+            userId
           );
         }
       }
@@ -1003,14 +1139,17 @@ async function processStripeEvent(
                 ? error.message
                 : "Unknown error: " + JSON.stringify(error),
             userId,
-          }
+          },
+          userId
         );
         log(
           "error",
           LogType.SUBSCRIPTION_ERROR,
           `Error updating stripe_customers: ${JSON.stringify(
             error
-          )} for user ${userId}`
+          )} for user ${userId}`,
+          { userId },
+          userId
         );
         throw error;
       }
@@ -1067,12 +1206,15 @@ async function processStripeEvent(
                 ? updateError.message
                 : "Unknown error: " + JSON.stringify(updateError),
             userId: customer.user_id,
-          }
+          },
+          customer.user_id
         );
         log(
           "error",
           LogType.STRIPE_SUBSCRIPTION_CANCELLED,
-          `Error updating tier: ${updateError} for user ${customer.user_id}`
+          `Error updating tier: ${updateError} for user ${customer.user_id}`,
+          { userId: customer.user_id },
+          customer.user_id
         );
         throw updateError;
       }
@@ -1097,7 +1239,8 @@ async function processStripeEvent(
                 ? customerUpdateError.message
                 : "Unknown error: " + JSON.stringify(customerUpdateError),
             userId: customer.user_id,
-          }
+          },
+          customer.user_id
         );
         log(
           "error",
@@ -1111,7 +1254,9 @@ async function processStripeEvent(
         log(
           "info",
           LogType.TIER_UPDATED,
-          `User ${customer.user_id} subscription cancelled, tier set to NONE.`
+          `User ${customer.user_id} subscription cancelled, tier set to NONE.`,
+          { userId: customer.user_id },
+          customer.user_id
         );
       } catch (error) {
         log(
@@ -1124,7 +1269,8 @@ async function processStripeEvent(
                 ? error.message
                 : "Unknown error: " + JSON.stringify(error),
             userId: customer.user_id,
-          }
+          },
+          customer.user_id
         );
       }
       break;
@@ -1170,7 +1316,9 @@ async function processStripeEvent(
           log(
             "info",
             LogType.STRIPE_SUBSCRIPTION_UPDATED,
-            `User ${customer.user_id} subscription is active, tier set/confirmed as PRO.`
+            `User ${customer.user_id} subscription is active, tier set/confirmed as PRO.`,
+            { userId: customer.user_id },
+            customer.user_id
           );
           break;
 
@@ -1184,7 +1332,8 @@ async function processStripeEvent(
               userId: customer.user_id,
               subscriptionId: subscription.id,
               status: subscription.status,
-            }
+            },
+            customer.user_id
           );
           break;
 
@@ -1217,7 +1366,8 @@ async function processStripeEvent(
               subscriptionId: subscription.id,
               status: subscription.status,
               tier: "NONE",
-            }
+            },
+            customer.user_id
           );
           break;
 
@@ -1225,7 +1375,9 @@ async function processStripeEvent(
           log(
             "warn",
             LogType.SUBSCRIPTION_ERROR,
-            `Unhandled subscription status ${subscription.status} for user ${customer.user_id}`
+            `Unhandled subscription status ${subscription.status} for user ${customer.user_id}`,
+            { userId: customer.user_id },
+            customer.user_id
           );
       }
 
@@ -1235,7 +1387,11 @@ async function processStripeEvent(
         log(
           "info",
           LogType.SUBSCRIPTION_RENEWED,
-          `User ${customer.user_id} trial extended to ${trialEnd.toISOString()}`
+          `User ${
+            customer.user_id
+          } trial extended to ${trialEnd.toISOString()}`,
+          { userId: customer.user_id },
+          customer.user_id
         );
       }
       break;
@@ -1276,13 +1432,19 @@ async function processStripeEvent(
         .eq("id", stripeCustomer.user_id);
 
       if (updateError) {
-        log("error", LogType.STRIPE_DELETE_USER_ERROR, "Error updating tier:", {
-          error:
-            updateError instanceof Error
-              ? updateError.message
-              : "Unknown error: " + JSON.stringify(updateError),
-          userId: stripeCustomer.user_id,
-        });
+        log(
+          "error",
+          LogType.STRIPE_DELETE_USER_ERROR,
+          "Error updating tier:",
+          {
+            error:
+              updateError instanceof Error
+                ? updateError.message
+                : "Unknown error: " + JSON.stringify(updateError),
+            userId: stripeCustomer.user_id,
+          },
+          stripeCustomer.user_id
+        );
         throw updateError;
       }
 
@@ -1304,7 +1466,8 @@ async function processStripeEvent(
                 : "Unknown error: " + JSON.stringify(deleteError),
             userId: stripeCustomer.user_id,
             stripeCustomerId: customer.id,
-          }
+          },
+          stripeCustomer.user_id
         );
         throw deleteError;
       }
@@ -1313,7 +1476,9 @@ async function processStripeEvent(
         log(
           "info",
           LogType.TIER_UPDATED,
-          `User ${stripeCustomer.user_id} Stripe customer deleted, tier set to NONE and stripe_customer record removed.`
+          `User ${stripeCustomer.user_id} Stripe customer deleted, tier set to NONE and stripe_customer record removed.`,
+          { userId: stripeCustomer.user_id },
+          stripeCustomer.user_id
         );
       } catch (error) {
         log(
@@ -1326,7 +1491,8 @@ async function processStripeEvent(
                 ? error.message
                 : "Unknown error: " + JSON.stringify(error),
             userId: stripeCustomer.user_id,
-          }
+          },
+          stripeCustomer.user_id
         );
       }
       break;
@@ -1369,10 +1535,16 @@ app.post(
       // verify price ID is valid
       const price = await stripe.prices.retrieve(priceId);
       if (!price) {
-        log("error", LogType.CHECKOUT_ERROR, `Invalid price ID: ${priceId}`, {
-          userId: user.id,
-          priceId,
-        });
+        log(
+          "error",
+          LogType.CHECKOUT_ERROR,
+          `Invalid price ID: ${priceId}`,
+          {
+            userId: user.id,
+            priceId,
+          },
+          user.id
+        );
         return res.status(400).json({ error: "Invalid price ID" });
       }
 
@@ -1400,7 +1572,8 @@ app.post(
         "info",
         LogType.CHECKOUT_SESSION_CREATED,
         `Successfully created checkout session. Session ID: ${session.id}`,
-        { userId: user.id, sessionId: session.id }
+        { userId: user.id, sessionId: session.id },
+        user.id
       );
 
       return res.json({ id: session.id });
@@ -1415,16 +1588,23 @@ app.post(
               ? e.message
               : "Unknown error: " + JSON.stringify(e)
           }`,
-          { userId: user?.id }
+          { userId: user?.id },
+          user?.id
         );
       }
-      log("error", LogType.SYSTEM_ERROR, "Error creating checkout session:", {
-        error:
-          e instanceof Error
-            ? e.message
-            : "Unknown error: " + JSON.stringify(e),
-        userId: user?.id,
-      });
+      log(
+        "error",
+        LogType.SYSTEM_ERROR,
+        "Error creating checkout session:",
+        {
+          error:
+            e instanceof Error
+              ? e.message
+              : "Unknown error: " + JSON.stringify(e),
+          userId: user?.id,
+        },
+        user?.id
+      );
       return res.status(500).json({ error: e });
     }
   }
@@ -1467,10 +1647,10 @@ app.post(
           LogType.GENERATION_LIMIT_REACHED,
           `Hit generation limit. Limit: ${maxGenerations}, Count: ${profile.generation_count}`,
           {
-            userId: user.id,
             limit: maxGenerations,
             count: profile.generation_count,
-          }
+          },
+          user.id
         );
         return res.status(403).json({
           error: "Generation limit reached",
@@ -1486,13 +1666,18 @@ app.post(
           resolution = t_res;
         }
       } catch (e) {
-        log("error", LogType.SYSTEM_ERROR, "Error parsing resolution:", {
-          error:
-            e instanceof Error
-              ? e.message
-              : "Unknown error: " + JSON.stringify(e),
-          userId: user?.id,
-        });
+        log(
+          "error",
+          LogType.SYSTEM_ERROR,
+          "Error parsing resolution:",
+          {
+            error:
+              e instanceof Error
+                ? e.message
+                : "Unknown error: " + JSON.stringify(e),
+          },
+          user.id
+        );
       }
 
       let prompt = req.body.prompt || "Astronaut riding a horse";
@@ -1509,10 +1694,10 @@ app.post(
           req.body.resolution
         }, Prompt: ${req.body.prompt || ""}`,
         {
-          userId: user.id,
           resolution: req.body.resolution,
           prompt: req.body.prompt,
-        }
+        },
+        user.id
       );
 
       // Log blacklisted words
@@ -1525,7 +1710,8 @@ app.post(
           "warn",
           LogType.BLACKLISTED_PROMPT,
           `Used blacklisted words in prompt: ${prompt}`,
-          { userId: user.id, prompt }
+          { prompt },
+          user.id
         );
         return res.status(400).json({
           error: "Prompt contains blacklisted words potentially against TOS.",
@@ -1573,16 +1759,22 @@ app.post(
               ? error.message
               : "Unknown error: " + JSON.stringify(error)
           }`,
-          { userId: user?.id }
+          {},
+          user?.id
         );
       }
-      log("error", LogType.SYSTEM_ERROR, "Error:", {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Unknown error: " + JSON.stringify(error),
-        userId: user?.id,
-      });
+      log(
+        "error",
+        LogType.SYSTEM_ERROR,
+        "Error:",
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Unknown error: " + JSON.stringify(error),
+        },
+        user?.id
+      );
       const errorMessage =
         error instanceof Error
           ? error.message
@@ -1616,7 +1808,7 @@ app.post(
           `No associated Stripe customer found for user ${user.id} ${
             customerError ? JSON.stringify(customerError) : ""
           } `,
-          { userId: user.id },
+          {},
           user.id
         );
         return res
