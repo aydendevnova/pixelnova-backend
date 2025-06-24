@@ -18,6 +18,10 @@ export enum LogType {
   SUBSCRIPTION_RENEWED = "subscription_renewed",
   SUBSCRIPTION_CANCELLED = "subscription_cancelled",
   SUBSCRIPTION_ERROR = "subscription_error",
+  STRIPE_DELETE_USER_ERROR = "stripe_delete_user_error",
+  STRIPE_SUBSCRIPTION_CANCELLED = "stripe_subscription_cancelled",
+  STRIPE_SUBSCRIPTION_UPDATED = "stripe_subscription_updated",
+
   CHECKOUT = "checkout",
   CHECKOUT_ERROR = "checkout_error",
   CHECKOUT_SESSION_CREATED = "checkout_session_created",

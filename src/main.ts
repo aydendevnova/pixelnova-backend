@@ -70,7 +70,10 @@ async function log(
     );
   } catch (err) {
     console.error("Failed to insert log", {
-      error: err instanceof Error ? err.message : "Unknown error",
+      error:
+        err instanceof Error
+          ? err.message
+          : "Unknown error: " + JSON.stringify(err),
       type,
       userId: user_id,
     });
@@ -226,7 +229,11 @@ app.post(
           LogType.SUBSCRIPTION_ERROR,
           `Stripe event processing error: event id: ${eventId} for user ${
             event.account
-          }. Error: ${e instanceof Error ? e.message : "Unknown error"}`,
+          }. Error: ${
+            e instanceof Error
+              ? e.message
+              : "Unknown error: " + JSON.stringify(e)
+          }`,
           { userId: event.account }
         );
         throw new APIError(500, "Failed to process Stripe event");
@@ -241,7 +248,9 @@ app.post(
         "error",
         LogType.SYSTEM_ERROR,
         `Webhook processing error: ${
-          err instanceof Error ? err.message : "Unknown error"
+          err instanceof Error
+            ? err.message
+            : "Unknown error: " + JSON.stringify(err)
         }`
       );
       throw new APIError(500, "Webhook processing failed");
@@ -442,7 +451,10 @@ app.patch(
             console.error("Image processing error:", error);
             return res.status(500).json({
               error: "Failed to process image",
-              message: error instanceof Error ? error.message : "Unknown error",
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "Unknown error: " + JSON.stringify(error),
             });
           }
         }
@@ -491,7 +503,10 @@ app.patch(
         console.error("Update account error:", err);
         res.status(500).json({
           error: "Failed to update account",
-          message: err instanceof Error ? err.message : "Unknown error",
+          message:
+            err instanceof Error
+              ? err.message
+              : "Unknown error: " + JSON.stringify(err),
         });
       }
     })();
@@ -562,7 +577,10 @@ app.post(
         console.error("Check username error:", err);
         res.status(500).json({
           error: "Failed to check username",
-          message: err instanceof Error ? err.message : "Unknown error",
+          message:
+            err instanceof Error
+              ? err.message
+              : "Unknown error: " + JSON.stringify(err),
         });
       }
     })();
@@ -663,7 +681,9 @@ app.post("/api/reduce-colors", upload.single("image"), async (req, res) => {
       "error",
       LogType.SYSTEM_ERROR,
       `Color reduction error: ${
-        err instanceof Error ? err.message : "Unknown error"
+        err instanceof Error
+          ? err.message
+          : "Unknown error: " + JSON.stringify(err)
       } for user ${user?.id}`,
       { userId: user?.id }
     );
@@ -721,7 +741,10 @@ app.post("/api/update-conversion-count", async (req, res) => {
     console.error("Update conversion count error:", err);
     res.status(500).json({
       error: "Failed to update conversion count",
-      message: err instanceof Error ? err.message : "Unknown error",
+      message:
+        err instanceof Error
+          ? err.message
+          : "Unknown error: " + JSON.stringify(err),
     });
   }
 });
@@ -752,7 +775,10 @@ app.get("/api/protected", async (req, res) => {
     console.error("Protected route error:", err);
     res.status(401).json({
       error: "Unauthorized",
-      message: err instanceof Error ? err.message : "Unknown error",
+      message:
+        err instanceof Error
+          ? err.message
+          : "Unknown error: " + JSON.stringify(err),
     });
   }
 });
@@ -832,14 +858,17 @@ async function processStripeEvent(
             LogType.SUBSCRIPTION_ERROR,
             "Error logging subscription renewal:",
             {
-              error: error instanceof Error ? error.message : "Unknown error",
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Unknown error: " + JSON.stringify(error),
               userId: customer.user_id,
             }
           );
         }
       } else {
         log(
-          "error",
+          "warn",
           LogType.SUBSCRIPTION_ERROR,
           "I don't know what to do? Invoice is not of subscription_create or subscription_cycle",
           {
@@ -920,7 +949,7 @@ async function processStripeEvent(
             error:
               updateError instanceof Error
                 ? updateError.message
-                : "Unknown error",
+                : "Unknown error: " + JSON.stringify(updateError),
             userId,
           }
         );
@@ -943,7 +972,10 @@ async function processStripeEvent(
             LogType.SUBSCRIPTION_ERROR,
             "Error logging tier update:",
             {
-              error: error instanceof Error ? error.message : "Unknown error",
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Unknown error: " + JSON.stringify(error),
               userId,
             }
           );
@@ -966,7 +998,10 @@ async function processStripeEvent(
           LogType.SUBSCRIPTION_ERROR,
           "Error updating stripe_customers:",
           {
-            error: error instanceof Error ? error.message : "Unknown error",
+            error:
+              error instanceof Error
+                ? error.message
+                : "Unknown error: " + JSON.stringify(error),
             userId,
           }
         );
@@ -992,16 +1027,21 @@ async function processStripeEvent(
         .single();
 
       if (customerError || !customer) {
-        log("error", LogType.SUBSCRIPTION_ERROR, "Error finding customer:", {
-          error:
-            customerError instanceof Error
-              ? customerError.message
-              : "Unknown error",
-          subscriptionId: subscription.id,
-        });
         log(
           "error",
-          LogType.SUBSCRIPTION_ERROR,
+          LogType.STRIPE_SUBSCRIPTION_CANCELLED,
+          "Error finding customer:",
+          {
+            error:
+              customerError instanceof Error
+                ? customerError.message
+                : "Unknown error: " + JSON.stringify(customerError),
+            subscriptionId: subscription.id,
+          }
+        );
+        log(
+          "error",
+          LogType.STRIPE_SUBSCRIPTION_CANCELLED,
           `Error finding customer: ${customerError} for subscription ${subscription.id}`
         );
         throw new Error("Customer not found");
@@ -1017,16 +1057,21 @@ async function processStripeEvent(
         .eq("id", customer.user_id);
 
       if (updateError) {
-        log("error", LogType.SUBSCRIPTION_ERROR, "Error updating tier:", {
-          error:
-            updateError instanceof Error
-              ? updateError.message
-              : "Unknown error",
-          userId: customer.user_id,
-        });
         log(
           "error",
-          LogType.SUBSCRIPTION_ERROR,
+          LogType.STRIPE_SUBSCRIPTION_CANCELLED,
+          "Error updating tier:",
+          {
+            error:
+              updateError instanceof Error
+                ? updateError.message
+                : "Unknown error: " + JSON.stringify(updateError),
+            userId: customer.user_id,
+          }
+        );
+        log(
+          "error",
+          LogType.STRIPE_SUBSCRIPTION_CANCELLED,
           `Error updating tier: ${updateError} for user ${customer.user_id}`
         );
         throw updateError;
@@ -1044,19 +1089,19 @@ async function processStripeEvent(
       if (customerUpdateError) {
         log(
           "error",
-          LogType.SUBSCRIPTION_ERROR,
+          LogType.STRIPE_SUBSCRIPTION_CANCELLED,
           "Error updating stripe_customers:",
           {
             error:
               customerUpdateError instanceof Error
                 ? customerUpdateError.message
-                : "Unknown error",
+                : "Unknown error: " + JSON.stringify(customerUpdateError),
             userId: customer.user_id,
           }
         );
         log(
           "error",
-          LogType.SUBSCRIPTION_ERROR,
+          LogType.STRIPE_SUBSCRIPTION_CANCELLED,
           `Error updating stripe_customers: ${customerUpdateError} for user ${customer.user_id}`
         );
         throw customerUpdateError;
@@ -1069,10 +1114,220 @@ async function processStripeEvent(
           `User ${customer.user_id} subscription cancelled, tier set to NONE.`
         );
       } catch (error) {
-        log("error", LogType.SUBSCRIPTION_ERROR, "Error logging tier update:", {
-          error: error instanceof Error ? error.message : "Unknown error",
-          userId: customer.user_id,
+        log(
+          "error",
+          LogType.STRIPE_SUBSCRIPTION_CANCELLED,
+          "Error logging tier update:",
+          {
+            error:
+              error instanceof Error
+                ? error.message
+                : "Unknown error: " + JSON.stringify(error),
+            userId: customer.user_id,
+          }
+        );
+      }
+      break;
+    }
+    case "customer.subscription.updated": {
+      const subscription = event.data.object;
+
+      // Find the user associated with this subscription
+      const { data: customer, error: customerError } = await supabase
+        .from("stripe_customers")
+        .select("user_id")
+        .eq("subscription_id", subscription.id)
+        .single();
+
+      if (customerError || !customer) {
+        log(
+          "error",
+          LogType.STRIPE_SUBSCRIPTION_UPDATED,
+          "Error finding customer for subscription update:",
+          {
+            error:
+              customerError instanceof Error
+                ? customerError.message
+                : "Unknown error: " + JSON.stringify(customerError),
+            subscriptionId: subscription.id,
+          }
+        );
+        throw new Error("Customer not found");
+      }
+
+      // Handle different subscription states
+      switch (subscription.status) {
+        case "active":
+          // Ensure user has PRO access
+          await supabase
+            .from("profiles")
+            .update({
+              tier: "PRO",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", customer.user_id);
+
+          log(
+            "info",
+            LogType.STRIPE_SUBSCRIPTION_UPDATED,
+            `User ${customer.user_id} subscription is active, tier set/confirmed as PRO.`
+          );
+          break;
+
+        case "past_due":
+          // Log the past due status but don't change tier yet
+          log(
+            "warn",
+            LogType.STRIPE_SUBSCRIPTION_UPDATED,
+            `User ${customer.user_id} subscription is past due.`,
+            {
+              userId: customer.user_id,
+              subscriptionId: subscription.id,
+              status: subscription.status,
+            }
+          );
+          break;
+
+        case "unpaid":
+        case "canceled":
+        case "paused":
+          // Downgrade user to NONE for these states
+          await supabase
+            .from("profiles")
+            .update({
+              tier: "NONE",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", customer.user_id);
+
+          // Update stripe_customers table to reflect inactive plan
+          await supabase
+            .from("stripe_customers")
+            .update({
+              plan_active: false,
+            })
+            .eq("user_id", customer.user_id);
+
+          log(
+            "info",
+            LogType.STRIPE_SUBSCRIPTION_UPDATED,
+            `User ${customer.user_id} subscription status changed to ${subscription.status}, tier set to NONE.`,
+            {
+              userId: customer.user_id,
+              subscriptionId: subscription.id,
+              status: subscription.status,
+              tier: "NONE",
+            }
+          );
+          break;
+
+        default:
+          log(
+            "warn",
+            LogType.SUBSCRIPTION_ERROR,
+            `Unhandled subscription status ${subscription.status} for user ${customer.user_id}`
+          );
+      }
+
+      // If trial was extended, log it
+      if (subscription.trial_end) {
+        const trialEnd = new Date(subscription.trial_end * 1000);
+        log(
+          "info",
+          LogType.SUBSCRIPTION_RENEWED,
+          `User ${customer.user_id} trial extended to ${trialEnd.toISOString()}`
+        );
+      }
+      break;
+    }
+    case "customer.deleted": {
+      const customer = event.data.object;
+
+      // Find the user associated with this Stripe customer
+      const { data: stripeCustomer, error: customerError } = await supabase
+        .from("stripe_customers")
+        .select("user_id")
+        .eq("stripe_customer_id", customer.id)
+        .single();
+
+      if (customerError || !stripeCustomer) {
+        log(
+          "error",
+          LogType.STRIPE_DELETE_USER_ERROR,
+          "Error finding customer:",
+          {
+            error:
+              customerError instanceof Error
+                ? customerError.message
+                : "Unknown error: " + JSON.stringify(customerError),
+            stripeCustomerId: customer.id,
+          }
+        );
+        throw new Error("Customer not found");
+      }
+
+      // Update user's tier to NONE
+      const { error: updateError } = await supabase
+        .from("profiles")
+        .update({
+          tier: "NONE",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", stripeCustomer.user_id);
+
+      if (updateError) {
+        log("error", LogType.STRIPE_DELETE_USER_ERROR, "Error updating tier:", {
+          error:
+            updateError instanceof Error
+              ? updateError.message
+              : "Unknown error: " + JSON.stringify(updateError),
+          userId: stripeCustomer.user_id,
         });
+        throw updateError;
+      }
+
+      // Delete the stripe_customers record
+      const { error: deleteError } = await supabase
+        .from("stripe_customers")
+        .delete()
+        .eq("stripe_customer_id", customer.id);
+
+      if (deleteError) {
+        log(
+          "error",
+          LogType.STRIPE_DELETE_USER_ERROR,
+          "Error deleting stripe_customer record:",
+          {
+            error:
+              deleteError instanceof Error
+                ? deleteError.message
+                : "Unknown error: " + JSON.stringify(deleteError),
+            userId: stripeCustomer.user_id,
+            stripeCustomerId: customer.id,
+          }
+        );
+        throw deleteError;
+      }
+
+      try {
+        log(
+          "info",
+          LogType.TIER_UPDATED,
+          `User ${stripeCustomer.user_id} Stripe customer deleted, tier set to NONE and stripe_customer record removed.`
+        );
+      } catch (error) {
+        log(
+          "error",
+          LogType.STRIPE_DELETE_USER_ERROR,
+          "Error logging customer deletion:",
+          {
+            error:
+              error instanceof Error
+                ? error.message
+                : "Unknown error: " + JSON.stringify(error),
+            userId: stripeCustomer.user_id,
+          }
+        );
       }
       break;
     }
@@ -1156,13 +1411,18 @@ app.post(
           "error",
           LogType.CHECKOUT_ERROR,
           `Error creating checkout session: ${
-            e instanceof Error ? e.message : "Unknown error"
+            e instanceof Error
+              ? e.message
+              : "Unknown error: " + JSON.stringify(e)
           }`,
           { userId: user?.id }
         );
       }
       log("error", LogType.SYSTEM_ERROR, "Error creating checkout session:", {
-        error: e instanceof Error ? e.message : "Unknown error",
+        error:
+          e instanceof Error
+            ? e.message
+            : "Unknown error: " + JSON.stringify(e),
         userId: user?.id,
       });
       return res.status(500).json({ error: e });
@@ -1227,7 +1487,10 @@ app.post(
         }
       } catch (e) {
         log("error", LogType.SYSTEM_ERROR, "Error parsing resolution:", {
-          error: e instanceof Error ? e.message : "Unknown error",
+          error:
+            e instanceof Error
+              ? e.message
+              : "Unknown error: " + JSON.stringify(e),
           userId: user?.id,
         });
       }
@@ -1306,17 +1569,24 @@ app.post(
           "error",
           LogType.PIXEL_ART_GENERATION_ERROR,
           `Error generating pixel art: ${
-            error instanceof Error ? error.message : "Unknown error"
+            error instanceof Error
+              ? error.message
+              : "Unknown error: " + JSON.stringify(error)
           }`,
           { userId: user?.id }
         );
       }
       log("error", LogType.SYSTEM_ERROR, "Error:", {
-        error: error instanceof Error ? error.message : "Unknown error",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unknown error: " + JSON.stringify(error),
         userId: user?.id,
       });
       const errorMessage =
-        error instanceof Error ? error.message : "Unknown error occurred";
+        error instanceof Error
+          ? error.message
+          : "Unknown error occurred: " + JSON.stringify(error);
       res.status(500).json({ error: errorMessage });
     }
   }
@@ -1366,7 +1636,9 @@ app.post(
         "error",
         LogType.BILLING_PORTAL_ERROR,
         `Error creating Stripe portal session: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error instanceof Error
+            ? error.message
+            : "Unknown error: " + JSON.stringify(error)
         }`
       );
       return res.status(500).json({ error: "Internal server error" });
