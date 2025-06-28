@@ -21,6 +21,7 @@ export async function generatePixelSprite(prompt: string) {
     parameters: {
       // num_inference_steps: 8, // keep latency ≈ 1.8 s
       // guidance_scale: 1.5,
+      seed: new Date().getTime(),
       negative_prompt: "3d render, realistic, blurry, noisy, photographic", // common clean-up
     },
   })) as unknown as Blob;
@@ -108,6 +109,25 @@ async function customDownscale(
   imageBuffer: Buffer,
   targetSize: number
 ): Promise<Buffer> {
+  // Get original image dimensions
+  const metadata = await sharp(imageBuffer).metadata();
+  if (!metadata.width || !metadata.height) {
+    throw new Error("Could not get image dimensions");
+  }
+
+  // Calculate target dimensions while maintaining aspect ratio
+  const aspectRatio = metadata.width / metadata.height;
+  let targetWidth = targetSize;
+  let targetHeight = targetSize;
+
+  if (aspectRatio > 1) {
+    // Image is wider than tall
+    targetHeight = Math.round(targetSize / aspectRatio);
+  } else if (aspectRatio < 1) {
+    // Image is taller than wide
+    targetWidth = Math.round(targetSize * aspectRatio);
+  }
+
   // Process image in a single Sharp pipeline for initial operations
   const { data, info } = await sharp(imageBuffer)
     .png({
@@ -115,27 +135,27 @@ async function customDownscale(
       dither: 0,
       palette: true,
     })
-    .resize(targetSize * 2, targetSize * 2, {
-      fit: "cover",
-      position: "center",
+    .resize(targetWidth * 2, targetHeight * 2, {
+      fit: "fill", // Use fill to maintain aspect ratio without cropping
     })
     .raw()
     .toBuffer({ resolveWithObject: true });
 
   // Calculate cell dimensions
   const cellSize = 2; // Since we resized to 2x target size
-  const size = targetSize * 2;
+  const width = targetWidth * 2;
+  const height = targetHeight * 2;
 
   // Create output buffer
-  const outputPixels = Buffer.alloc(targetSize * targetSize * 4);
+  const outputPixels = Buffer.alloc(targetWidth * targetHeight * 4);
 
   // Process each cell
-  for (let y = 0; y < targetSize; y++) {
-    for (let x = 0; x < targetSize; x++) {
+  for (let y = 0; y < targetHeight; y++) {
+    for (let x = 0; x < targetWidth; x++) {
       // Calculate median color for this cell
       const medianColor = calculateMedianColor(
         data,
-        size,
+        width,
         info.channels,
         x * cellSize,
         y * cellSize,
@@ -144,7 +164,7 @@ async function customDownscale(
       );
 
       // Set output pixel
-      const i = (y * targetSize + x) * 4;
+      const i = (y * targetWidth + x) * 4;
       outputPixels[i] = medianColor.r;
       outputPixels[i + 1] = medianColor.g;
       outputPixels[i + 2] = medianColor.b;
@@ -155,8 +175,8 @@ async function customDownscale(
   // Final PNG conversion
   return sharp(outputPixels, {
     raw: {
-      width: targetSize,
-      height: targetSize,
+      width: targetWidth,
+      height: targetHeight,
       channels: 4,
     },
   })

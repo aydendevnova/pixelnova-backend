@@ -1662,7 +1662,7 @@ app.post(
       let resolution = 128;
       try {
         const t_res = parseInt(req.body.resolution);
-        if ([64, 96, 128].includes(t_res)) {
+        if ([64, 96, 128, 256].includes(t_res)) {
           resolution = t_res;
         }
       } catch (e) {
@@ -1684,6 +1684,8 @@ app.post(
       prompt += ` ${resolution}x${resolution} ${resolution} x ${resolution}`;
       if (resolution === 64) {
         prompt += " low resolution ";
+      } else if (resolution === 256) {
+        prompt += " high resolution ";
       }
 
       // Log attempt
@@ -1723,6 +1725,9 @@ app.post(
 
       // Process the image - only color reduction, no downscaling
       const processedImage = await sharp(imgBuffer)
+        .modulate({
+          saturation: 1.2, // Increase saturation by 20%
+        })
         .png({
           colors: 16,
           dither: 0,
