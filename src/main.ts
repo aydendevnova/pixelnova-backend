@@ -1747,7 +1747,10 @@ app.post(
       // increment generations
       await supabase
         .from("profiles")
-        .update({ generation_count: profile.generation_count + 1 })
+        .update({
+          generation_count: profile.generation_count + 1,
+          generation_count_lifetime: profile.generation_count_lifetime + 1,
+        })
         .eq("id", user.id);
 
       // Send the processed image
