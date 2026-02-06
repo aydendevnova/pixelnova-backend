@@ -3,7 +3,6 @@ export const BLACKLISTED_WORDS = [
   // Profanity
   "fuck",
   "shit",
-  "ass",
   "bitch",
   "cunt",
   "dick",
@@ -15,25 +14,6 @@ export const BLACKLISTED_WORDS = [
   // Racial/Ethnic Slurs
   "nigger",
   "nigga",
-  "spic",
-  "wetback",
-  "kike",
-  "gook",
-  "paki",
-  "chink",
-  "ethnic cleansing",
-
-  // Hate Speech
-  "nazi",
-  "neonazi",
-  "hitler",
-  "holocaust",
-  "kkk",
-  "whitepower",
-  "ku klux klan",
-  "kukluxklan",
-  "jihad",
-  "terrorist",
 
   // Sexual Content
   "porn",
@@ -41,9 +21,7 @@ export const BLACKLISTED_WORDS = [
   "onlyfans",
   "xvideos",
   "hentai",
-  "explicit",
   "pornhub",
-  "sex",
   "nude",
   "nudes",
   "vagina",
@@ -60,11 +38,9 @@ export const BLACKLISTED_WORDS = [
   "gooning",
   "cum",
   "cumming",
-  "jerking",
   "jorking",
   "cumsock",
   "nsfw",
-  "xxx",
   "pornhub",
   "onlyfans",
   "xvideos",
@@ -72,14 +48,10 @@ export const BLACKLISTED_WORDS = [
   "explicit",
 
   // Violence
-  "kill",
-  "murder",
   "rape",
   "raping",
   "molest",
   "molesting",
-  "abuse",
-  "abusing",
 
   // Common Variations
   "f*ck",
@@ -103,7 +75,6 @@ export const BLACKLISTED_WORDS = [
   "pron",
   "p*rn",
   "p.rn",
-  "nig",
   "nigga",
   "niga",
   "n1gger",
@@ -111,77 +82,4 @@ export const BLACKLISTED_WORDS = [
   "n*gger",
   "nigg3r",
   "n.gger",
-  "4ss",
-  "@ss",
-  "a$$",
-  "azz",
-  "a$s",
-
-  // Known Terrorists/Extremists
-  "osama",
-  "binladen",
-  "bin_laden",
-  "alshabab",
-  "alqaeda",
-  "isis",
-  "daesh",
-  "taliban",
-  "bokoharam",
-  "boko_haram",
-  "hezbollah",
-  "hammas",
-  "alqassam",
-  "alnusra",
-  "isil",
-  "jihadi",
-  "jihadist",
-  "caliphate",
-  "dawla",
-  "dawlah",
-
-  // LGBTQ+ Hate Speech
-  "faggot",
-  "dyke",
-  "tranny",
-  "shemale",
-  "sodomite",
-  "f4g",
-  "fag",
-
-  // Transphobic Terms
-  "trannie",
-  "heshe",
-  "shim",
-
-  // Additional Racial/Ethnic Slurs
-  "beaner",
-  "raghead",
-  "towelhead",
-  "redskin",
-  "zipperhead",
-  "coon",
-  "chinaman",
-  "sandnigger",
-  "wigger",
-  "wog",
-
-  // Drug-related
-  "cocaine",
-  "heroin",
-  "meth",
-  "crack",
-  "weed4sale",
-  "drugs4sale",
-
-  // Illegal Activities
-  "illegal",
-
-  // Additional Hate Groups
-  "proudboys",
-  "neonazi",
-  "skinhead",
-  "whitesupremacy",
-  "antisemitic",
-  "antisemitism",
-  "aryan",
 ];
