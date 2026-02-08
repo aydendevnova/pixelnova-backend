@@ -19,8 +19,9 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=8787
 
-# Copy built files and dependencies
+# Copy built files, WASM assets, and dependencies
 COPY --from=builder /app/dist ./dist
+COPY public/ ./public/
 COPY package*.json ./
 
 # Install production dependencies only
