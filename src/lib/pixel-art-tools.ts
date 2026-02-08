@@ -7,13 +7,28 @@ if (!process.env.HF_TOKEN) {
 
 const hf = new InferenceClient(process.env.HF_TOKEN);
 
-export async function generatePixelSprite(prompt: string) {
-  const fullPrompt = prompt.includes("Retro Pixel")
+const MODELS = [{
+  name: "Retro Pixel Flux LoRA",
+  model: "prithivMLmods/Retro-Pixel-Flux-LoRA",
+  triggerWords: "Retro Pixel",
+  needsDownscale: true,
+}, 
+{
+  name: "Flux 1 LoRA Modern Pixel Art",
+  model: "UmeAiRT/FLUX.1-dev-LoRA-Modern_Pixel_art",
+  triggerWords: "Flux 1 LoRA Modern Pixel Art",
+  needsDownscale: true,
+}]
+
+export async function generatePixelSprite(prompt: string, model = 0) {
+  const fullPrompt = prompt.includes(MODELS[model].triggerWords)
     ? prompt
-    : `Retro Pixel ${prompt}`;
+    : `${MODELS[model].triggerWords} ${prompt}`;
+
+  const modelData = MODELS[model];
 
   const response = (await hf.textToImage({
-    model: "prithivMLmods/Retro-Pixel-Flux-LoRA",
+    model: modelData.model,
     inputs: fullPrompt,
     parameters: {
       seed: new Date().getTime(),
@@ -24,5 +39,5 @@ export async function generatePixelSprite(prompt: string) {
   const arrayBuffer = await response.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
 
-  return buffer;
+  return { buffer, needsDownscale: modelData.needsDownscale };
 }

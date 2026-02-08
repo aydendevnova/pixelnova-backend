@@ -1669,7 +1669,8 @@ app.post(
       }
 
     // Generate the image
-    const imgBuffer = await generatePixelSprite(prompt);
+    const model = typeof req.body.model === "number" ? req.body.model : 0;
+    const { buffer: imgBuffer, needsDownscale } = await generatePixelSprite(prompt, model);
 
     // Boost saturation before WASM processing
     const colorReducedBuffer = await sharp(imgBuffer)
@@ -1680,8 +1681,13 @@ app.post(
       .png()
       .toBuffer();
 
-    // Process through WASM pixel snapper in auto-detect mode
-    const processedImage = processWithPixelSnapper(colorReducedBuffer, 16);
+      let processedImage: Buffer;
+    if (needsDownscale) {
+      // Process through WASM pixel snapper in auto-detect mode
+      processedImage = processWithPixelSnapper(colorReducedBuffer, 16);
+    } else {
+      processedImage = colorReducedBuffer;
+    }
 
     // Save to supabase storage without awaiting
     const promise = supabase.storage
