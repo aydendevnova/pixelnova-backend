@@ -103,9 +103,8 @@ fly deploy
 
 - `GET /api/protected` - Verify auth token
 - `PATCH /api/update-account` - Update profile (multipart/form-data)
-- `POST /api/reduce-colors` - Image color reduction (multipart/form-data)
-- `POST /api/update-conversion-count` - Increment conversion counter
-- `POST /api/generate-pixel-art` - AI pixel art generation
+- `POST /api/generate-pixel-art` - AI pixel art generation 
+- `POST /api/convert-image` - Convert image to pixel art using WASM pixel snapper
 - `POST /api/checkout` - Create Stripe checkout session
 - `POST /api/create-portal-session` - Create Stripe billing portal session
 
@@ -122,3 +121,27 @@ fly deploy
 ```
 
 For detailed deployment configuration, see `fly-deploy.md` and `server-docker.md`.
+
+## License
+
+This project is licensed under the [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License (CC BY-NC-SA 4.0)](https://creativecommons.org/licenses/by-nc-sa/4.0/).
+
+See the [LICENSE](LICENSE) file for the full text.
+
+## Third-Party Attributions
+
+### SpriteFusion Pixel Snapper
+
+Used for post-processing AI-generated pixel art. The WASM module snaps pixels to a consistent grid and quantizes colors to a strict palette. This project uses a modified version of this code.
+
+- **Author:** Hugo Duprez
+- **Repository:** [github.com/Hugo-Dz/spritefusion-pixel-snapper](https://github.com/Hugo-Dz/spritefusion-pixel-snapper)
+- **License:** MIT License
+- **Website:** [spritefusion.com/pixel-snapper](https://www.spritefusion.com/pixel-snapper)
+
+### Retro Pixel Flux LoRA
+
+Hugging Face model used for text-to-image pixel art generation.
+
+- **Model:** [prithivMLmods/Retro-Pixel-Flux-LoRA](https://huggingface.co/prithivMLmods/Retro-Pixel-Flux-LoRA)
+- **Platform:** [Hugging Face](https://huggingface.co)

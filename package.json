@@ -1,7 +1,8 @@
 {
   "name": "pixelnova-backend",
   "version": "1.0.0",
-  "description": "",
+  "description": "Backend API for PixelNova pixel art platform",
+  "license": "CC-BY-NC-SA-4.0",
   "main": "index.js",
   "scripts": {
     "kill-port": "node scripts/kill-port.js",
@@ -11,8 +12,7 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "PixelNova LLC",
   "dependencies": {
     "@huggingface/inference": "^4.0.4",
     "@supabase/supabase-js": "^2.47.8",
