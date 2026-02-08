@@ -43,7 +43,8 @@ import { checkUsernameSchema, updateAccountSchema } from "./types/types";
 import rateLimit from "express-rate-limit";
 
 import { stripe } from "./utils/stripe";
-import { downscaleImage, generatePixelSprite } from "./lib/pixel-art-tools";
+import { generatePixelSprite } from "./lib/pixel-art-tools";
+import { processWithPixelSnapper } from "./lib/pixel-snapper";
 import sharp from "sharp";
 import { getMaxConversions, getMaxGenerations } from "./const/plan-limits";
 import { Database } from "./lib/types_db";
@@ -142,10 +143,7 @@ if (process.env.NODE_ENV === "production") {
 
 // Always allow webhook requests to bypass rate limiting
 app.use((req, res, next) => {
-  if (
-    req.path === "/api/webhook" ||
-    req.path === "/api/update-conversion-count"
-  ) {
+  if (req.path === "/api/webhook") {
     return next();
   }
   return apiLimiter(req, res, next);
@@ -706,12 +704,60 @@ app.post("/api/reduce-colors", upload.single("image"), async (req, res) => {
   }
 });
 
-// New endpoint to update conversion count
-app.post("/api/update-conversion-count", async (req, res) => {
+// Convert image to pixel art using WASM pixel snapper
+app.post("/api/convert-image", upload.single("image"), async (req, res) => {
+  let user;
+  let supabase;
   try {
-    const { user, supabase } = await withAuth(req);
+    if (!req.file) {
+      throw new ValidationError("No image file provided");
+    }
 
-    // Get user profile
+    const auth = await withAuth(req);
+    user = auth.user;
+    supabase = auth.supabase;
+
+    await log(
+      "info",
+      LogType.PIXEL_ART_GENERATION,
+      "Convert image request",
+      {
+        fileSize: req.file.size,
+      },
+      user.id
+    );
+
+    // Parse k_colors from request body (optional, default 16)
+    let kColors = 16;
+    try {
+      if (req.body.kColors) {
+        const parsed = parseInt(req.body.kColors);
+        if (!isNaN(parsed) && parsed > 0 && parsed <= 256) {
+          kColors = parsed;
+        }
+      }
+    } catch (err) {
+      // Continue with default value
+    }
+
+    // Parse targetSegments - 0 = auto-detect (WASM decides grid), >0 = forced grid segments
+    let targetSegments = 0;
+    try {
+      if (req.body.targetSegments) {
+        const parsed = parseInt(req.body.targetSegments);
+        if (!isNaN(parsed) && parsed >= 0 && parsed <= 512) {
+          targetSegments = parsed;
+        }
+      }
+    } catch (err) {
+      // Continue with default (auto-detect)
+    }
+
+    // Ensure input has enough resolution for the target grid density
+    // Auto-detect uses 512 baseline; forced mode needs at least 4 source pixels per grid cell
+    const maxSize = targetSegments > 0 ? Math.max(512, targetSegments * 4) : 512;
+
+    // Get user profile to check limits
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
       .select("*")
@@ -719,47 +765,92 @@ app.post("/api/update-conversion-count", async (req, res) => {
       .single();
 
     if (profileError || !profile) {
-      throw profileError || new Error("Profile not found");
+      throw new APIError(404, "Profile not found");
     }
 
     // Check if user has reached their conversion limit
     const maxConversions = getMaxConversions(profile.tier);
     if (profile.conversion_count >= maxConversions) {
-      return res.status(403).json({
-        error: "Conversion limit reached",
+      await log(
+        "warn",
+        LogType.GENERATION_LIMIT_REACHED,
+        `Conversion limit reached for user ${user.id}. Current count: ${profile.conversion_count}. Max count: ${maxConversions}`,
+        {
+          limit: maxConversions,
+          current: profile.conversion_count,
+        },
+        user.id
+      );
+
+      throw new ForbiddenError("Conversion limit reached", {
         limit: maxConversions,
         current: profile.conversion_count,
       });
     }
 
-    // Increment both conversion counters
+    // Resize input to a consistent working size for WASM processing
+    const resizedBuffer = await sharp(req.file.buffer)
+      .resize(maxSize, maxSize, {
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      .png()
+      .toBuffer();
+
+    // Process through WASM pixel snapper
+    // targetSegments=0 means auto-detect; >0 forces output grid density
+    const processedBuffer = processWithPixelSnapper(
+      resizedBuffer,
+      kColors,
+      targetSegments > 0 ? targetSegments : undefined
+    );
+
+    // Increment conversion counters
     const { error: updateError } = await supabase
       .from("profiles")
       .update({
         conversion_count: (profile.conversion_count ?? 0) + 1,
-        conversion_count_lifetime: (profile.conversion_count_lifetime ?? 0) + 1,
+        conversion_count_lifetime:
+          (profile.conversion_count_lifetime ?? 0) + 1,
         updated_at: new Date().toISOString(),
       })
       .eq("id", user.id);
 
     if (updateError) {
-      throw updateError;
+      await log(
+        "error",
+        LogType.SYSTEM_ERROR,
+        `Failed to update conversion count for user ${user.id}`,
+        { error: updateError },
+        user.id
+      );
     }
 
+    const base64Image = processedBuffer.toString("base64");
+
     res.json({
-      success: true,
-      newCount: (profile.conversion_count ?? 0) + 1,
+      image: `data:image/png;base64,${base64Image}`,
       maxConversions,
+      currentCount: (profile.conversion_count ?? 0) + 1,
     });
   } catch (err) {
-    console.error("Update conversion count error:", err);
-    res.status(500).json({
-      error: "Failed to update conversion count",
-      message:
+    if (err instanceof APIError) {
+      throw err;
+    }
+
+    await log(
+      "error",
+      LogType.SYSTEM_ERROR,
+      `Convert image error: ${
         err instanceof Error
           ? err.message
-          : "Unknown error: " + JSON.stringify(err),
-    });
+          : "Unknown error: " + JSON.stringify(err)
+      } for user ${user?.id}`,
+      {},
+      user?.id
+    );
+
+    throw new APIError(500, "Failed to convert image");
   }
 });
 
@@ -1659,44 +1750,15 @@ app.post(
         });
       }
 
-      let resolution = 128;
-      try {
-        const t_res = parseInt(req.body.resolution);
-        if ([64, 96, 128, 256].includes(t_res)) {
-          resolution = t_res;
-        }
-      } catch (e) {
-        log(
-          "error",
-          LogType.SYSTEM_ERROR,
-          "Error parsing resolution:",
-          {
-            error:
-              e instanceof Error
-                ? e.message
-                : "Unknown error: " + JSON.stringify(e),
-          },
-          user.id
-        );
-      }
-
       let prompt = req.body.prompt || "Astronaut riding a horse";
-      prompt += ` ${resolution}x${resolution} ${resolution} x ${resolution}`;
-      if (resolution === 64) {
-        prompt += " low resolution ";
-      } else if (resolution === 256) {
-        prompt += " high resolution ";
-      }
+      prompt += " 128x128 128 x 128";
 
       // Log attempt
       log(
         "info",
         LogType.PIXEL_ART_GENERATION,
-        `Generate pixel art request. Resolution: ${
-          req.body.resolution
-        }, Prompt: ${req.body.prompt || ""}`,
+        `Generate pixel art request. Prompt: ${req.body.prompt || ""}`,
         {
-          resolution: req.body.resolution,
           prompt: req.body.prompt,
         },
         user.id
@@ -1720,42 +1782,38 @@ app.post(
         });
       }
 
-      // Generate the image
-      const imgBuffer = await generatePixelSprite(prompt);
+    // Generate the image
+    const imgBuffer = await generatePixelSprite(prompt);
 
-      // Process the image - only color reduction, no downscaling
-      const processedImage = await sharp(imgBuffer)
-        .modulate({
-          saturation: 1.2, // Increase saturation by 20%
-        })
-        .png({
-          colors: 16,
-          dither: 0,
-          compressionLevel: 0,
-          palette: true,
-        })
-        .toBuffer();
+    // Boost saturation before WASM processing
+    const colorReducedBuffer = await sharp(imgBuffer)
+      .modulate({
+        saturation: 1.2,
+      })
+      .resize(512, 512, { fit: "inside", withoutEnlargement: true })
+      .png()
+      .toBuffer();
 
-      // downscale
-      const downscaledImage = await downscaleImage(processedImage, resolution);
+    // Process through WASM pixel snapper in auto-detect mode
+    const processedImage = processWithPixelSnapper(colorReducedBuffer, 16);
 
-      // Save to supabase storage without awaiting
-      const promise = supabase.storage
-        .from("pixel-art")
-        .upload(`${user.id}/${Date.now()}.png`, downscaledImage);
+    // Save to supabase storage without awaiting
+    const promise = supabase.storage
+      .from("pixel-art")
+      .upload(`${user.id}/${Date.now()}.png`, processedImage);
 
-      // increment generations
-      await supabase
-        .from("profiles")
-        .update({
-          generation_count: profile.generation_count + 1,
-          generation_count_lifetime: profile.generation_count_lifetime + 1,
-        })
-        .eq("id", user.id);
+    // increment generations
+    await supabase
+      .from("profiles")
+      .update({
+        generation_count: profile.generation_count + 1,
+        generation_count_lifetime: profile.generation_count_lifetime + 1,
+      })
+      .eq("id", user.id);
 
-      // Send the processed image
-      res.set("Content-Type", "image/png");
-      res.send(downscaledImage);
+    // Send the processed image
+    res.set("Content-Type", "image/png");
+    res.send(processedImage);
     } catch (error) {
       // Log error
       if (supabase) {
@@ -1845,44 +1903,6 @@ app.post(
     }
   }
 );
-
-// async function processTestImage(gamePath: string): Promise<Buffer> {
-//   try {
-//     const startTime = Date.now();
-//     // Read the input image
-//     // use fs to read the image
-//     const inputImage = await fs.readFile(
-//       path.join(__dirname, "generated-images", gamePath)
-//     );
-//     // const inputImage = await sharp(gamePath);
-//     const metadata = await sharp(inputImage).metadata();
-
-//     if (!metadata.width || !metadata.height) {
-//       throw new Error("Could not get image dimensions");
-//     }
-
-//     const downscaledImage = await downscaleImage(inputImage, 128);
-
-//     // Save to disk with game path-based filename
-//     const outputPath = path.join(
-//       __dirname,
-//       "generated-images",
-//       `${gamePath}-downscaled.png`
-//     );
-//     await sharp(downscaledImage).toFile(outputPath);
-
-//     const endTime = Date.now();
-//     console.log(`Time elapsed: ${endTime - startTime}ms`);
-//     console.log("downscaledImage", outputPath);
-
-//     return downscaledImage;
-//   } catch (error) {
-//     console.error("Error processing test image:", error);
-//     throw error;
-//   }
-// }
-
-// processTestImage("/test-1750625857434.png");
 
 // Apply error handling middleware last
 app.use(errorHandler);
