@@ -1,14 +1,14 @@
-# PixelNova Backend
+# Pixel Nova Studio Backend
 
-Express.js backend API for PixelNova, a pixel art generation and conversion platform. Handles AI image generation via HuggingFace, image processing with Sharp, Stripe subscription management, and user authentication through Supabase. Deployed on Fly.io.
+Express.js backend API for Pixel Nova Studio, a free pixel art toolkit. Handles image processing with Sharp, pixel-perfect conversion via WASM, and user authentication through Supabase. Deployed on Fly.io.
 
 For screenshots, app details, and the full user experience, see the [frontend repository](https://github.com/aydendevnova/pixelnova-frontend) or visit [pixelnova.app](https://pixelnova.app).
 
 ## Overview
 
-This backend provides REST API endpoints for pixel art generation, image color reduction/downscaling, user account management, and subscription billing. It enforces usage quotas based on user tier (NONE/PRO), processes Stripe webhooks for subscription lifecycle events, and manages user profiles with blacklist filtering and rate limiting.
+This backend provides REST API endpoints for converting images to pixel art and for user account management. All authenticated routes validate JWT tokens via Supabase.
 
-Image generation uses HuggingFace's inference API to produce pixel art sprites from text prompts. The color reduction endpoint quantizes uploaded images to a specified palette size using Sharp's PNG quantization. All authenticated routes validate JWT tokens via Supabase and track usage limits stored in PostgreSQL.
+The conversion endpoint runs uploaded images through a WASM pixel snapper that aligns pixels to a consistent grid and quantizes colors to a strict palette. Every feature is free and unmetered.
 
 ## Tech Stack
 
@@ -22,14 +22,10 @@ Image generation uses HuggingFace's inference API to produce pixel art sprites f
 
 - Supabase (PostgreSQL, Auth, Storage)
 
-**Image Processing & AI**
+**Image Processing**
 
-- Sharp (image manipulation, color quantization, downscaling)
-- HuggingFace Inference API (pixel art generation)
-
-**Payments & Subscriptions**
-
-- Stripe (checkout, webhooks, billing portal)
+- Sharp (image manipulation, resizing)
+- SpriteFusion Pixel Snapper (WASM grid snapping and color quantization)
 
 **Security & Rate Limiting**
 
@@ -51,16 +47,12 @@ Image generation uses HuggingFace's inference API to produce pixel art sprites f
 
 ## Features
 
-- AI-powered pixel art generation with configurable resolution (64x64 to 256x256)
-- Image color reduction/palette quantization with adjustable color count
+- Image to pixel art conversion with adjustable color count and grid density
 - JWT-based authentication and authorization via Supabase
-- Stripe subscription management (checkout, webhooks, billing portal)
-- Usage quota enforcement (generation and conversion limits by tier)
 - Profile management (username, avatar, website with blacklist filtering)
 - Comprehensive logging system with admin dashboard support
-- Rate limiting for API routes and AI operations
+- Rate limiting for API routes
 - Image storage in Supabase storage buckets
-- Webhook idempotency checks for reliable Stripe event processing
 
 ## Setup / Installation
 
@@ -69,12 +61,8 @@ Image generation uses HuggingFace's inference API to produce pixel art sprites f
 npm install
 
 # Environment variables required (see .env.example):
-# HF_TOKEN - HuggingFace API token
 # SUPABASE_URL - Supabase project URL
 # SUPABASE_SERVICE_ROLE_KEY - Supabase service role key
-# STRIPE_WEBHOOK_SECRET - Stripe webhook signing secret
-# STRIPE_SECRET_KEY - Stripe secret key
-# STRIPE_PRICE_ID_PRO - Stripe price ID for PRO plan
 # PORT - Server port (default: 8787)
 
 # Development
@@ -96,17 +84,13 @@ fly deploy
 
 - `GET /` - Health check
 - `GET /api/health` - Health check
-- `POST /api/webhook` - Stripe webhook handler
 - `POST /api/check-username` - Check username availability
 
 **Authenticated**
 
 - `GET /api/protected` - Verify auth token
 - `PATCH /api/update-account` - Update profile (multipart/form-data)
-- `POST /api/generate-pixel-art` - AI pixel art generation 
 - `POST /api/convert-image` - Convert image to pixel art using WASM pixel snapper
-- `POST /api/checkout` - Create Stripe checkout session
-- `POST /api/create-portal-session` - Create Stripe billing portal session
 
 **Admin**
 
@@ -132,16 +116,9 @@ See the [LICENSE](LICENSE) file for the full text.
 
 ### SpriteFusion Pixel Snapper
 
-Used for post-processing AI-generated pixel art. The WASM module snaps pixels to a consistent grid and quantizes colors to a strict palette. This project uses a modified version of this code.
+Used to convert uploaded images into true pixel art. The WASM module snaps pixels to a consistent grid and quantizes colors to a strict palette. This project uses a modified version of this code.
 
 - **Author:** Hugo Duprez
 - **Repository:** [github.com/Hugo-Dz/spritefusion-pixel-snapper](https://github.com/Hugo-Dz/spritefusion-pixel-snapper)
 - **License:** MIT License
 - **Website:** [spritefusion.com/pixel-snapper](https://www.spritefusion.com/pixel-snapper)
-
-### Retro Pixel Flux LoRA
-
-Hugging Face model used for text-to-image pixel art generation.
-
-- **Model:** [prithivMLmods/Retro-Pixel-Flux-LoRA](https://huggingface.co/prithivMLmods/Retro-Pixel-Flux-LoRA)
-- **Platform:** [Hugging Face](https://huggingface.co)

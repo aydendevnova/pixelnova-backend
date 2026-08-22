@@ -1,7 +1,7 @@
 {
   "name": "pixelnova-backend",
   "version": "1.0.0",
-  "description": "Backend API for PixelNova pixel art platform",
+  "description": "Backend API for Pixel Nova Studio",
   "license": "CC-BY-NC-SA-4.0",
   "main": "index.js",
   "scripts": {
@@ -14,7 +14,6 @@
   "keywords": [],
   "author": "PixelNova LLC",
   "dependencies": {
-    "@huggingface/inference": "^4.0.4",
     "@supabase/supabase-js": "^2.47.8",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
@@ -22,10 +21,8 @@
     "express-rate-limit": "^7.5.0",
     "helmet": "^8.1.0",
     "multer": "^1.4.5-lts.1",
-    "openai": "^4.77.0",
     "plaintextparser": "^1.0.3",
     "sharp": "^0.34.5",
-    "stripe": "^17.5.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {

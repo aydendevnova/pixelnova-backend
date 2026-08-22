@@ -14,36 +14,16 @@ export enum LogType {
   LOGOUT = "logout",
   AUTH_ERROR = "auth_error",
 
-  // Subscription/Payment
-  SUBSCRIPTION_RENEWED = "subscription_renewed",
-  SUBSCRIPTION_CANCELLED = "subscription_cancelled",
-  SUBSCRIPTION_ERROR = "subscription_error",
-  STRIPE_DELETE_USER_ERROR = "stripe_delete_user_error",
-  STRIPE_SUBSCRIPTION_CANCELLED = "stripe_subscription_cancelled",
-  STRIPE_SUBSCRIPTION_UPDATED = "stripe_subscription_updated",
-
-  CHECKOUT = "checkout",
-  CHECKOUT_ERROR = "checkout_error",
-  CHECKOUT_SESSION_CREATED = "checkout_session_created",
-
-  BILLING_PORTAL_ERROR = "billing_portal_error",
-
-  // Generation/Conversion
+  // Conversion
+  // Value kept as "pixel_art_generation" so historical logs stay queryable.
   PIXEL_ART_GENERATION = "pixel_art_generation",
-  PIXEL_ART_GENERATION_SUCCESS = "pixel_art_generation_success",
-  PIXEL_ART_GENERATION_ERROR = "pixel_art_generation_error",
-  GENERATION_LIMIT_REACHED = "generation_limit_reached",
 
   // Avatar
   AVATAR_UPLOAD = "avatar_upload",
   AVATAR_UPLOAD_SUCCESS = "avatar_upload_success",
   AVATAR_UPLOAD_ERROR = "avatar_upload_error",
 
-  // Tier
-  TIER_UPDATED = "tier_updated",
-
   // Content Moderation
-  BLACKLISTED_PROMPT = "blacklisted_prompt",
   BLACKLISTED_CONTENT = "blacklisted_content",
 
   // System
