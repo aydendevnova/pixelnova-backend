@@ -1,5 +1,5 @@
 # Build stage for Node.js
-FROM node:20-slim AS builder
+FROM node:22-slim AS builder
 WORKDIR /app
 
 # Copy package files and install dependencies
@@ -14,7 +14,7 @@ COPY src/ ./src/
 RUN npm run build
 
 # Production stage
-FROM node:20-slim AS runner
+FROM node:22-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=8787

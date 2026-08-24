@@ -99,7 +99,8 @@ if (process.env.NODE_ENV === "production") {
   app.use(
     cors({
       origin: [
-        "https://editor.pixelnova.app", // Cloudflare Pages domain
+        "https://pixelnovastudio.app",
+        // Legacy domains, kept while traffic moves to pixelnovastudio.app
         "https://pixelnova.app",
       ],
       methods: ["GET", "POST", "PUT", "OPTIONS", "PATCH", "DELETE"],

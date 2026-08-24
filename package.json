@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Backend API for Pixel Nova Studio",
   "license": "CC-BY-NC-SA-4.0",
+  "engines": {
+    "node": ">=22"
+  },
   "main": "index.js",
   "scripts": {
     "kill-port": "node scripts/kill-port.js",
